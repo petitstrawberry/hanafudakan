@@ -7,23 +7,49 @@ export interface SceneProps {
   intensity?: number;
   active?: boolean;
   cardSkin?: CardSkin;
+  placement?: 'ambient' | 'table';
+  game?: TableSceneState;
   onReady?: (backend: string) => void;
 }
+
+export type TableSceneState = {
+  hyper: boolean;
+  field: number[];
+  hand: number[];
+  opponentHandCount: number;
+  deckCount: number;
+  drawnCard: number | null;
+  phase: string;
+  turn: number;
+  eventId: number;
+  eventCaptured: boolean;
+  eventCardId: number | null;
+  eventTargetIds: number[];
+  eventStage: 'reveal' | 'travel' | 'stack' | 'settle' | 'collect' | null;
+  effectId: number;
+};
 
 type Backend = 'WebGPU' | 'WebGL2' | '2D';
 
 /** Decorative GPU scenery. Gameplay never depends on the renderer being available. */
-export default function Scene({ intensity = 1, active = true, cardSkin = 'recolored', onReady }: SceneProps) {
+export default function Scene({
+  intensity = 1,
+  active = true,
+  cardSkin = 'recolored',
+  placement = 'ambient',
+  game,
+  onReady,
+}: SceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const settingsRef = useRef({ intensity, active, cardSkin });
+  const settingsRef = useRef({ intensity, active, cardSkin, placement, game });
   const readyRef = useRef(onReady);
   const invalidateRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
-    settingsRef.current = { intensity, active, cardSkin };
+    settingsRef.current = { intensity, active, cardSkin, placement, game };
     readyRef.current = onReady;
     invalidateRef.current();
-  }, [intensity, active, cardSkin, onReady]);
+  }, [intensity, active, cardSkin, placement, game, onReady]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -46,6 +72,12 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
     const camera = new THREE.PerspectiveCamera(43, 1, 0.1, 60);
     camera.position.set(0, 0, 15);
     scene.fog = new THREE.FogExp2(0x06110e, 0.037);
+    const tableFill = new THREE.AmbientLight(0x8eb59f, 1.25);
+    const tableKey = new THREE.DirectionalLight(0xffe3a4, 2.1);
+    tableKey.position.set(-4.5, 7, 8);
+    const tableRim = new THREE.PointLight(0xd95b3d, 0, 12, 2);
+    tableRim.position.set(0, 0, 1.2);
+    scene.add(tableFill, tableKey, tableRim);
 
     const geometry = <T extends THREE.BufferGeometry,>(value: T): T => {
       geometries.add(value);
@@ -127,6 +159,10 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
     const hyperCards: THREE.Mesh[] = [];
     const hyperCardMaterials: THREE.MeshBasicMaterial[] = [];
     const hyperCardIds = [8, 20, 28, 36, 44, 12, 32, 0];
+    const hyperStagePositions = [
+      [-6.1, 2.7, -0.2], [-4.2, -3.0, 0.1], [6.1, 2.7, -0.1], [4.2, -3.0, 0.2],
+      [-1.9, 4.1, -0.5], [1.9, -4.0, -0.3], [-6.0, -0.9, 0.3], [6.0, 0.4, 0.25],
+    ] as const;
     for (let i = 0; i < hyperCardIds.length; i += 1) {
       const cardCanvas = document.createElement('canvas');
       cardCanvas.width = 256;
@@ -183,9 +219,8 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
         geometry(new THREE.BoxGeometry(1.08, 1.64, 0.075)),
         [edge, edge, edge, edge, front, front],
       );
-      const slot = i % 4;
-      const row = Math.floor(i / 4);
-      card.position.set((slot - 1.5) * 1.58, row === 0 ? 1.02 : -1.02, -row * 0.46);
+      const stage = hyperStagePositions[i];
+      card.position.set(stage[0], stage[1], stage[2]);
       card.rotation.set((i - 3) * 0.09, (i % 2 ? -1 : 1) * 0.16, (i - 3) * 0.11);
       hyperCards.push(card);
       hyperCardGroup.add(card);
@@ -239,9 +274,103 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
     hyperBoardGroup.visible = false;
     scene.add(hyperBoardGroup);
 
+    // The live table is also represented in the WebGPU scene. HTML cards stay
+    // above this layer for hit testing and accessibility, while these meshes
+    // provide the actual depth, thickness, perspective and camera motion.
+    const gameCardGroup = new THREE.Group();
+    gameCardGroup.position.set(0, 0, -3.45);
+    const gameCardGeometry = geometry(new THREE.BoxGeometry(0.9, 1.42, 0.075));
+    const gameEdgeMaterial = material(new THREE.MeshStandardMaterial({
+      color: 0x241d16,
+      transparent: true,
+      opacity: 0.94,
+      depthWrite: true,
+      roughness: 0.58,
+      metalness: 0.18,
+    }));
+    const backCanvas = document.createElement('canvas');
+    backCanvas.width = 128;
+    backCanvas.height = 192;
+    const backContext = backCanvas.getContext('2d');
+    if (backContext) {
+      backContext.fillStyle = '#672f33';
+      backContext.fillRect(0, 0, 128, 192);
+      backContext.strokeStyle = '#d8ad68';
+      backContext.lineWidth = 5;
+      backContext.strokeRect(8, 8, 112, 176);
+      backContext.strokeStyle = 'rgba(255, 224, 153, .35)';
+      backContext.lineWidth = 2;
+      backContext.strokeRect(16, 16, 96, 160);
+      backContext.fillStyle = 'rgba(246, 211, 126, .8)';
+      backContext.font = '700 30px serif';
+      backContext.textAlign = 'center';
+      backContext.textBaseline = 'middle';
+      backContext.fillText('花', 64, 96);
+    }
+    const backTexture = new THREE.CanvasTexture(backCanvas);
+    textures.add(backTexture);
+    // Eight field cards + both hands + a visible stock stack + the drawn card
+    // fit in every normal deal, with a few spare meshes for a capture flight.
+    const gameCardEntries = Array.from({ length: 40 }, () => {
+      const front = material(new THREE.MeshStandardMaterial({
+        map: backTexture,
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        roughness: 0.46,
+        metalness: 0.08,
+      }));
+      const mesh = new THREE.Mesh(gameCardGeometry, [
+        gameEdgeMaterial,
+        gameEdgeMaterial,
+        gameEdgeMaterial,
+        gameEdgeMaterial,
+        front,
+        front,
+      ]);
+      mesh.visible = false;
+      gameCardGroup.add(mesh);
+      return { mesh, front };
+    });
+    gameCardGroup.visible = false;
+    scene.add(gameCardGroup);
+
     // Use the same OSS card art as the playable table. The generated face above
     // remains a deterministic fallback while an SVG texture is loading.
     const textureLoader = new THREE.TextureLoader();
+    const gameTextureCache = new Map<string, THREE.Texture>();
+    const gameTexturePending = new Set<string>();
+    const loadGameTexture = (id: number, skin: CardSkin, front: THREE.MeshStandardMaterial) => {
+      const key = `${skin}:${id}`;
+      const cached = gameTextureCache.get(key);
+      if (cached) {
+        front.map = cached;
+        front.color.set(0xffffff);
+        front.needsUpdate = true;
+        return;
+      }
+      if (gameTexturePending.has(key)) return;
+      gameTexturePending.add(key);
+      textureLoader.load(
+        cardImage(id, skin),
+        (texture) => {
+          gameTexturePending.delete(key);
+          if (disposed) {
+            texture.dispose();
+            return;
+          }
+          texture.colorSpace = THREE.SRGBColorSpace;
+          textures.add(texture);
+          gameTextureCache.set(key, texture);
+          front.map = texture;
+          front.color.set(0xffffff);
+          front.needsUpdate = true;
+        },
+        undefined,
+        () => gameTexturePending.delete(key),
+      );
+    };
     let loadedSkin = '';
     const loadHyperCardTextures = (skin: CardSkin) => {
       if (loadedSkin === skin) return;
@@ -306,6 +435,63 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
     hyperRingGroup.visible = false;
     scene.add(hyperRingGroup);
 
+    const impactMaterial = material(new THREE.MeshBasicMaterial({
+      color: 0xffdc7b,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }));
+    const impactRing = new THREE.Mesh(
+      geometry(new THREE.TorusGeometry(0.72, 0.045, 8, 64)),
+      impactMaterial,
+    );
+    impactRing.position.set(0, 0, 0.2);
+    impactRing.rotation.x = Math.PI / 2;
+    impactRing.visible = false;
+    gameCardGroup.add(impactRing);
+    const shockwaves = Array.from({ length: 3 }, (_, index) => {
+      const shockMaterial = material(new THREE.MeshBasicMaterial({
+        color: index === 0 ? 0xfff0a6 : index === 1 ? 0xff8a4c : 0x70d8ff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }));
+      const shockwave = new THREE.Mesh(
+        geometry(new THREE.TorusGeometry(0.7 + index * 0.16, 0.035 + index * 0.012, 8, 64)),
+        shockMaterial,
+      );
+      shockwave.position.set(0, 0, 0.15 + index * 0.04);
+      shockwave.rotation.x = Math.PI / 2;
+      shockwave.visible = false;
+      gameCardGroup.add(shockwave);
+      return { shockwave, shockMaterial, index };
+    });
+    const lightningGroup = new THREE.Group();
+    const lightningBolts = Array.from({ length: 10 }, (_, index) => {
+      const points = 13;
+      const positions = new Float32Array(points * 3);
+      const boltGeometry = geometry(new THREE.BufferGeometry());
+      boltGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const boltMaterial = material(new THREE.MeshBasicMaterial({
+        color: index % 3 === 0 ? 0xfff0a6 : index % 3 === 1 ? 0x80d8ff : 0xff714d,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }));
+      const bolt = new THREE.Line(boltGeometry, boltMaterial);
+      bolt.frustumCulled = false;
+      lightningGroup.add(bolt);
+      return { bolt, positions, points, phase: random(index + 2200) * Math.PI * 2 };
+    });
+    lightningGroup.position.set(0, 0, -3.3);
+    lightningGroup.visible = false;
+    scene.add(lightningGroup);
+    let lastEffectId = 0;
+    let impactStarted = -10;
+
     // A soft canvas texture adds depth without a postprocessing dependency.
     const glowCanvas = document.createElement('canvas');
     glowCanvas.width = 128;
@@ -341,6 +527,25 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
         readyRef.current?.(backend);
       }
     };
+    let resourcesDisposed = false;
+    const disposeSceneResources = () => {
+      if (resourcesDisposed) return;
+      resourcesDisposed = true;
+      // WebGPU keeps material dispose listeners on its render objects. Dispose
+      // scene resources before the renderer clears those objects; reversing the
+      // order makes Three try to decrement a node that no longer exists.
+      try { dust.dispose(); } catch { /* Best effort during an interrupted init. */ }
+      geometries.forEach((resource) => {
+        try { resource.dispose(); } catch { /* Best effort during teardown. */ }
+      });
+      materials.forEach((resource) => {
+        try { resource.dispose(); } catch { /* Best effort during teardown. */ }
+      });
+      textures.forEach((resource) => {
+        try { resource.dispose(); } catch { /* Best effort during teardown. */ }
+      });
+      scene.clear();
+    };
     const releaseRenderer = (target: THREE.WebGPURenderer | undefined) => {
       if (!target) return;
       target.domElement.remove();
@@ -354,6 +559,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       initialized = false;
       window.cancelAnimationFrame(frame);
       frame = 0;
+      disposeSceneResources();
       releaseRenderer(renderer);
       renderer = undefined;
       announce('2D');
@@ -366,7 +572,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       const hyperActive = strength > 1.08;
       // Rendering a full-screen canvas at display refresh rate is needlessly
       // expensive for a decorative layer. Keep the animation time based, but
-      // cap actual GPU presents to 30fps in Hyper and 24fps elsewhere.
+      // cap actual GPU presents to 24fps in Hyper and 18fps elsewhere.
       const frameInterval = hyperActive ? 1000 / 24 : 1000 / 18;
       if (moving && lastRenderTime && time - lastRenderTime < frameInterval) {
         frame = window.requestAnimationFrame(draw);
@@ -387,6 +593,111 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       if (moving) elapsed += delta;
       const motion = elapsed * 0.26;
       loadHyperCardTextures(settingsRef.current.cardSkin);
+
+      const game = settingsRef.current.game;
+      const tableActive = Boolean(game && game.phase !== 'waiting');
+      const hyperVisualActive = hyperActive && tableActive;
+      if (game && game.effectId !== lastEffectId) {
+        lastEffectId = game.effectId;
+        if (game.hyper) impactStarted = elapsed;
+      }
+      const impactProgress = Math.max(0, Math.min(1, (elapsed - impactStarted) / 1.5));
+      const burstProgress = Math.max(0, Math.min(1, (elapsed - impactStarted) / 1.8));
+      const burstPower = hyperVisualActive && game?.hyper && burstProgress < 1
+        ? Math.sin(Math.PI * burstProgress)
+        : 0;
+      const eventCardIds = new Set([
+        ...(game?.eventCardId === null || game?.eventCardId === undefined ? [] : [game.eventCardId]),
+        ...(game?.eventTargetIds || []),
+      ]);
+      gameCardGroup.visible = tableActive;
+      gameCardEntries.forEach(({ mesh }) => { mesh.visible = false; });
+      let gameCardIndex = 0;
+      const placeGameCard = (
+        id: number,
+        x: number,
+        y: number,
+        z: number,
+        rotation: number,
+        back = false,
+      ) => {
+        const entry = gameCardEntries[gameCardIndex++];
+        if (!entry) return;
+        const { mesh, front } = entry;
+        const eventCard = !back && eventCardIds.has(id);
+        const stackProgress = eventCard && game?.eventCaptured && (game.eventStage === 'stack' || game.eventStage === 'collect')
+          ? Math.min(1, impactProgress * 1.35)
+          : 0;
+        mesh.visible = true;
+        mesh.position.set(
+          x * (1 - stackProgress),
+          y * (1 - stackProgress) + (eventCard ? Math.sin(impactProgress * Math.PI) * 0.2 : 0),
+          z + (eventCard ? Math.sin(impactProgress * Math.PI) * 0.65 : 0),
+        );
+        mesh.scale.setScalar(eventCard ? 1 + Math.sin(impactProgress * Math.PI) * 0.13 : 1);
+        mesh.rotation.set(
+          (hyperActive ? Math.sin(motion * 0.7 + gameCardIndex) * 0.08 : 0)
+            + (eventCard ? Math.sin(impactProgress * Math.PI) * 0.42 : 0),
+          back ? Math.PI : 0,
+          rotation + (eventCard ? Math.sin(impactProgress * Math.PI) * (gameCardIndex % 2 ? -0.16 : 0.16) : 0),
+        );
+        front.opacity = back ? 0.72 : 0.92;
+        if (back) {
+          front.map = backTexture;
+          front.color.set(0xffffff);
+          front.needsUpdate = true;
+        } else {
+          loadGameTexture(id, settingsRef.current.cardSkin, front);
+        }
+      };
+      if (game) {
+        const fieldColumns = 4;
+        game.field.forEach((id, index) => {
+          const column = index % fieldColumns;
+          const row = Math.floor(index / fieldColumns);
+          placeGameCard(
+            id,
+            (column - 1.5) * 1.24,
+            (0.5 - row) * 1.78,
+            0.12 + row * 0.05,
+            ((id * 7) % 9 - 4) * 0.018,
+          );
+        });
+        const handGap = game.hand.length > 1 ? Math.min(1.0, 6.6 / (game.hand.length - 1)) : 0;
+        game.hand.forEach((id, index) => {
+          const x = (index - (game.hand.length - 1) / 2) * handGap;
+          placeGameCard(id, x, -3.55, 0.35, (index - 3.5) * 0.035);
+        });
+        for (let index = 0; index < Math.min(8, game.opponentHandCount); index += 1) {
+          const x = (index - (game.opponentHandCount - 1) / 2) * 0.8;
+          placeGameCard(0, x, 3.55, 0.32 + index * 0.012, (3.5 - index) * 0.035, true);
+        }
+        const deckLayers = Math.min(8, Math.max(1, Math.ceil(game.deckCount / 4)));
+        for (let index = 0; index < deckLayers; index += 1) {
+          placeGameCard(0, -5.05 + index * 0.035, 0, -0.1 + index * 0.04, -0.08, true);
+        }
+        if (game.drawnCard !== null) {
+          placeGameCard(game.drawnCard, 5.05, 0, 0.38, 0.04);
+        }
+      }
+      impactRing.visible = hyperVisualActive && Boolean(game?.hyper) && impactProgress < 1;
+      impactRing.scale.setScalar(0.45 + impactProgress * 4.2);
+      impactMaterial.opacity = impactRing.visible ? (0.32 + burstPower) * (1 - impactProgress * 0.5) : 0;
+      impactRing.rotation.z = motion * 1.4;
+      shockwaves.forEach(({ shockwave, shockMaterial, index }) => {
+        shockwave.visible = impactRing.visible;
+        shockwave.scale.setScalar(0.55 + burstProgress * (4.6 + index * 1.6));
+        shockwave.rotation.z = motion * (1.2 + index * 0.7);
+        shockMaterial.opacity = impactRing.visible
+          ? burstPower * (0.92 - index * 0.2)
+          : 0;
+      });
+      gameCardGroup.rotation.x = hyperVisualActive
+        ? Math.sin(motion * 0.18) * 0.04 + burstPower * Math.sin(burstProgress * 18) * 0.12
+        : 0;
+      gameCardGroup.rotation.y = hyperVisualActive
+        ? Math.sin(motion * 0.24) * 0.05 + burstPower * 0.24
+        : 0;
 
       for (let i = 0; i < dust.count; i += 1) {
         const speed = 0.18 + random(i + 600) * 0.45;
@@ -414,7 +725,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       petalMaterials.forEach((petalMaterial) => { petalMaterial.opacity = 0.25 * strength; });
       orbitGroup.rotation.z = -0.35 + Math.sin(motion * 0.09) * 0.045;
       orbitMaterials.forEach((ringMaterial, i) => { ringMaterial.opacity = (0.13 - i * 0.009) * strength; });
-      hyperCardGroup.visible = hyperActive;
+      hyperCardGroup.visible = hyperVisualActive;
       hyperCardMaterials.forEach((cardMaterial, i) => {
         cardMaterial.opacity = hyperActive
           ? (i % 2 ? 0.86 : 0.82) * Math.min(1, (strength - 1) * 2.1)
@@ -422,36 +733,53 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       });
       hyperCards.forEach((card, i) => {
         const phase = motion * (0.65 + i * 0.025) + i * 1.7;
-        const slot = i % 4;
-        const row = Math.floor(i / 4);
-        card.position.y = (row === 0 ? 1.02 : -1.02) + Math.sin(phase) * 0.34;
-        card.position.x = (slot - 1.5) * 1.58 + Math.sin(phase * 0.7) * 0.24;
-        card.position.z = -row * 0.46 + Math.cos(phase * 0.5) * 0.16;
+        const stage = hyperStagePositions[i];
+        card.position.y = stage[1] + Math.sin(phase) * 0.34;
+        card.position.x = stage[0] + Math.sin(phase * 0.7) * 0.24;
+        card.position.z = stage[2] + Math.cos(phase * 0.5) * 0.16;
         card.rotation.x = Math.sin(phase * 0.8) * 0.42;
         card.rotation.y = Math.cos(phase * 0.63) * 0.72;
-        card.rotation.z = (slot - 1.5) * 0.11 + Math.sin(phase * 0.5) * 0.12;
+        card.rotation.z = (i - 3.5) * 0.11 + Math.sin(phase * 0.5) * 0.12;
       });
       hyperCardGroup.rotation.x = Math.sin(motion * 0.22) * 0.09;
       hyperCardGroup.rotation.y = Math.cos(motion * 0.18) * 0.14;
       hyperCardGroup.position.y = 0.1 + Math.sin(motion * 0.31) * 0.14;
-      hyperBoardGroup.visible = hyperActive;
-      const boardOpacity = hyperActive ? Math.min(1, (strength - 1) * 2) : 0;
+      hyperBoardGroup.visible = tableActive;
+      const boardOpacity = tableActive
+        ? hyperActive
+          ? Math.min(1, (strength - 1) * 2)
+          : 0.34
+        : 0;
       (boardFrame.material as THREE.MeshBasicMaterial).opacity = boardOpacity * 0.32;
       (boardSurface.material as THREE.MeshBasicMaterial).opacity = boardOpacity * 0.16;
       boardLineMaterial.opacity = boardOpacity * 0.34;
       // Orbit the camera around the actual board, instead of only rotating
       // card sprites. This is the depth cue that makes Hyper feel like a 3D
       // table while the ordinary room remains still and quiet.
-      const cameraAngle = motion * 0.34;
-      camera.position.x = hyperActive ? Math.sin(cameraAngle) * 1.65 : 0;
-      camera.position.y = hyperActive ? Math.sin(cameraAngle * 0.72) * 0.62 : 0;
-      camera.position.z = hyperActive ? 15 + Math.cos(cameraAngle * 0.8) * 0.45 : 15;
+      const cameraAngle = motion * (hyperActive ? 0.62 : tableActive ? 0.1 : 0)
+        + burstPower * 1.8;
+      const cameraRadius = hyperVisualActive ? 2.1 + burstPower * 3.4 : 0.72;
+      camera.position.x = tableActive ? Math.sin(cameraAngle) * cameraRadius : 0;
+      camera.position.y = tableActive
+        ? Math.sin(cameraAngle * 0.72) * (hyperVisualActive ? 0.82 + burstPower * 1.35 : 0.24)
+        : 0;
+      camera.position.z = tableActive
+        ? 15 + Math.cos(cameraAngle * 0.8) * (hyperVisualActive ? 0.62 + burstPower * 0.85 : 0.18)
+        : 15;
       camera.lookAt(0, -0.2, -3.9);
-      hyperSparks.visible = hyperActive;
-      hyperSparkMaterial.opacity = hyperActive ? 0.44 * Math.min(1, (strength - 1) * 2) : 0;
+      camera.rotation.z = hyperVisualActive
+        ? Math.sin(burstProgress * 22) * burstPower * 0.085
+        : 0;
+      hyperSparks.visible = hyperVisualActive;
+      const impactStrength = impactRing.visible ? Math.max(burstPower, 1 - impactProgress) : 0;
+      hyperSparkMaterial.opacity = hyperActive
+        ? 0.44 * Math.min(1, (strength - 1) * 2) + impactStrength * 0.9
+        : 0;
       for (let i = 0; i < hyperSparks.count; i += 1) {
         const phase = motion * (0.55 + random(i + 1200) * 0.8) + i * 0.83;
-        const radius = 3.4 + random(i + 1300) * 3.2;
+        const radius = impactStrength > 0
+          ? 0.45 + impactProgress * (3.5 + random(i + 1300) * 3.6)
+          : 3.4 + random(i + 1300) * 3.2;
         dummy.position.set(
           Math.cos(phase) * radius,
           Math.sin(phase * 1.27) * 2.6,
@@ -464,14 +792,41 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
         hyperSparks.setMatrixAt(i, dummy.matrix);
       }
       hyperSparks.instanceMatrix.needsUpdate = true;
-      hyperRingGroup.visible = hyperActive;
+      hyperRingGroup.visible = hyperVisualActive;
       hyperRingGroup.rotation.z = motion * 0.17;
       hyperRingGroup.rotation.y = Math.sin(motion * 0.4) * 0.18;
+      hyperRingGroup.scale.setScalar(1 + impactStrength * 0.58);
       hyperRingMaterials.forEach((ringMaterial, i) => {
         ringMaterial.opacity = hyperActive
-          ? (0.2 - i * 0.025) * Math.min(1, (strength - 1) * 2)
+          ? (0.2 - i * 0.025) * Math.min(1, (strength - 1) * 2) + impactStrength * (0.12 - i * 0.02)
           : 0;
       });
+      const lightningPower = hyperVisualActive
+        ? Math.min(1, 0.18 + burstPower * 1.8)
+        : 0;
+      lightningGroup.visible = lightningPower > 0.01;
+      lightningBolts.forEach(({ bolt, positions, points, phase }, index) => {
+        const angle = phase + motion * (0.75 + index * 0.04);
+        const endRadius = 2.7 + random(index + 2300) * 3.2;
+        const endX = Math.cos(angle) * endRadius;
+        const endY = Math.sin(angle * 1.13) * endRadius * 0.72;
+        for (let point = 0; point < points; point += 1) {
+          const progress = point / (points - 1);
+          const jitter = point === 0 || point === points - 1
+            ? 0
+            : Math.sin(motion * 3.8 + phase + point * 4.7) * (0.11 + burstPower * 0.42);
+          const offset = Math.sin(phase + point * 8.1) * (0.08 + burstPower * 0.22);
+          positions[point * 3] = endX * progress + jitter + offset;
+          positions[point * 3 + 1] = endY * progress + Math.cos(phase + point * 5.4) * (0.08 + burstPower * 0.2);
+          positions[point * 3 + 2] = Math.sin(phase + point * 2.1) * 0.34 + progress * 0.5;
+        }
+        const position = bolt.geometry.getAttribute('position');
+        position.needsUpdate = true;
+        (bolt.material as THREE.MeshBasicMaterial).opacity = lightningPower
+          * (0.34 + (index % 3) * 0.12);
+        bolt.scale.setScalar(0.74 + burstPower * 0.7);
+      });
+      tableRim.intensity = hyperVisualActive ? 3 + burstPower * 25 : 0;
       try { renderer.render(scene, camera); } catch { fallback(); return; }
       if (moving) frame = window.requestAnimationFrame(draw);
     };
@@ -566,21 +921,17 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       resizeObserver?.disconnect();
       reducedMotion.removeEventListener('change', onMotionPreference);
       document.removeEventListener('visibilitychange', onVisibility);
+      disposeSceneResources();
       releaseRenderer(renderer);
-      dust.dispose();
-      geometries.forEach((resource) => resource.dispose());
-      materials.forEach((resource) => resource.dispose());
-      textures.forEach((resource) => resource.dispose());
-      scene.clear();
     };
   }, []);
 
   return (
     <div
       ref={hostRef}
-      className="ambient-scene"
+      className={`ambient-scene ${placement === 'table' ? 'table-scene' : ''}`}
       aria-hidden="true"
-      style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none',
+      style={{ position: placement === 'table' ? 'absolute' : 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none',
         background: 'radial-gradient(ellipse at 18% 35%, #102b21 0%, transparent 58%), radial-gradient(ellipse at 87% 74%, #211f12 0%, transparent 49%), #07110e' }}
     >
       <div style={{ position: 'absolute', inset: 0,

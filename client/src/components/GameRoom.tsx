@@ -19,6 +19,8 @@ import {
 import Card from "./Card";
 import CapturedYaku from "./CapturedYaku";
 import { YakuCutIn } from "./YakuCutIn";
+import Scene from "./Scene";
+import type { TableSceneState } from "./Scene";
 import {
   buildYakuAnnouncements,
   yakuAnnouncementDuration,
@@ -41,6 +43,7 @@ type Props = {
   send: (command: object) => void;
   leave: () => void;
   copyInvite: () => void;
+  onBackend?: (backend: string) => void;
 };
 // Every card in these events has already been played or revealed by the server.
 // Neither the opponent's remaining hand nor the stock is part of this protocol.
@@ -99,6 +102,10 @@ const signature = (room: RoomView) =>
   ]);
 const sleep = (duration: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, duration));
+// Keep the contract beat readable without stalling the table for several
+// seconds. The queue still waits for this promise, so CPU/opponent moves cannot
+// slip underneath the overlay while it is on screen.
+const hyperCutInDuration = () => (motionEnabled() ? 1800 : 900);
 const paint = () =>
   new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -117,6 +124,7 @@ export default function GameRoom({
   send,
   leave,
   copyInvite,
+  onBackend,
 }: Props) {
   const { skin } = useCardSkin();
   const [room, setRoom] = useState<RoomView>(incoming);
@@ -135,6 +143,7 @@ export default function GameRoom({
     id: string;
   } | null>(null);
   const [animating, setAnimating] = useState(false);
+  const [sceneBackend, setSceneBackend] = useState("2D");
   const [submitting, setSubmitting] = useState(false);
   const submitLock = useRef(false);
   const [flight, setFlight] = useState<Flight | null>(null);
@@ -243,6 +252,7 @@ export default function GameRoom({
   const opponent = own === 0 ? 1 : 0;
   const myTurn = me !== null && room.turn === me;
   const hyperMode = room.hyperEnabled || room.mode === "hyper";
+  const sceneReady = sceneBackend === "WebGPU" || sceneBackend === "WebGL2";
   const hyperState = room.hyper;
   const playing = room.phase === "play";
   const drawnChoice = room.phase === "draw_choice";
@@ -277,6 +287,13 @@ export default function GameRoom({
     : undefined;
   const resultWinner =
     room.phase === "finished" ? room.matchWinner : room.winner;
+  const handleSceneBackend = useCallback(
+    (backend: string) => {
+      setSceneBackend(backend);
+      onBackend?.(backend);
+    },
+    [onBackend],
+  );
 
   useEffect(() => {
     alive.current = true;
@@ -326,7 +343,7 @@ export default function GameRoom({
   }, [celebration]);
   useEffect(() => {
     if (!hyperCutIn) return;
-    const timer = window.setTimeout(() => setHyperCutIn(null), motionEnabled() ? 4600 : 1800);
+    const timer = window.setTimeout(() => setHyperCutIn(null), hyperCutInDuration());
     return () => window.clearTimeout(timer);
   }, [hyperCutIn]);
 
@@ -497,7 +514,11 @@ export default function GameRoom({
         await sleep(settleDuration);
         if (!alive.current || epoch !== playbackEpoch.current) return;
         if (event.captured) {
-          playSound("capture");
+          playSound(hyperMode ? "hyper_capture" : "capture");
+          if (hyperMode && event.targetIds.length >= 2) {
+            await sleep(110);
+            playSound("hyper_chain");
+          }
           setFlight(
             animate
               ? { ...base, stage: "collect", duration: timing.collect }
@@ -549,6 +570,37 @@ export default function GameRoom({
           const continuous =
             !restoring &&
             (!events.length || events[0].id === lastEvent.current + 1);
+          const announce = !roundChanged && continuous;
+          const calledHyper =
+            nextRoom.hyper?.contracts.some(
+              (contracts, index) =>
+                contracts.length > (previous.hyper?.contracts[index]?.length || 0),
+            ) || false;
+          const hyperContract = calledHyper
+            ? nextRoom.hyper?.contracts
+                .flatMap((contracts, player) =>
+                  contracts
+                    .slice(previous.hyper?.contracts[player]?.length || 0)
+                    .map((contract) => ({ contract, player })),
+                )[0]?.contract
+            : undefined;
+
+          // A contract announcement owns the timeline. Show it before the next
+          // snapshot's move queue is allowed to advance so a CPU/opponent can
+          // never play behind the cut-in overlay.
+          if (calledHyper && announce && hyperContract) {
+            setCelebration(`契約 · ${hyperContract.name}`);
+            setHyperCutIn({
+              name: hyperContract.name,
+              source: hyperContract.source,
+              description: hyperContract.description,
+              sequence: ++cueSequence.current,
+            });
+            playSound("hyper");
+            await sleep(hyperCutInDuration());
+            if (!alive.current) return;
+            if (epoch !== playbackEpoch.current) continue;
+          }
           if (!roundChanged && continuous) {
             for (const event of events) {
               await runEvent(event, epoch);
@@ -570,7 +622,6 @@ export default function GameRoom({
             lastEvent.current,
             ...events.map((event) => event.id),
           );
-          const announce = !roundChanged && continuous;
           if (!announce)
             announcedRoles.current = nextRoom.yaku.map(
               (roles) => new Map(roles.map((role) => [role.name, role.points])),
@@ -599,19 +650,6 @@ export default function GameRoom({
           const calledKoikoi = nextRoom.koikoi.some(
             (count, index) => count > (previous.koikoi[index] || 0),
           );
-          const calledHyper =
-            nextRoom.hyper?.contracts.some(
-              (contracts, index) =>
-                contracts.length > (previous.hyper?.contracts[index]?.length || 0),
-            ) || false;
-          const hyperContract = calledHyper
-            ? nextRoom.hyper?.contracts
-                .flatMap((contracts, player) =>
-                  contracts
-                    .slice(previous.hyper?.contracts[player]?.length || 0)
-                    .map((contract) => ({ contract, player })),
-                )[0]?.contract
-            : undefined;
           updateView(nextRoom);
           setFlight(null);
           setSelected(null);
@@ -623,19 +661,6 @@ export default function GameRoom({
             setCelebration("こいこい！");
             playSound("koikoi");
             await sleep(motionEnabled() ? 650 : 150);
-          }
-          if (calledHyper && announce) {
-            setCelebration(hyperContract ? `契約 · ${hyperContract.name}` : "HYPER CONTRACT");
-            if (hyperContract) {
-              setHyperCutIn({
-                name: hyperContract.name,
-                source: hyperContract.source,
-                description: hyperContract.description,
-                sequence: ++cueSequence.current,
-              });
-            }
-            playSound("hyper");
-            await sleep(motionEnabled() ? 820 : 180);
           }
           for (const item of cues) {
             if (!alive.current) return;
@@ -698,7 +723,6 @@ export default function GameRoom({
           setCue(null);
           setFlight(null);
           setLandingCard(null);
-          setHyperCutIn(null);
           setAnnouncement("");
         }
       }
@@ -862,22 +886,40 @@ export default function GameRoom({
         <div className="game-primary">
           <div
             ref={table}
-            className={`game-table ${animating ? "table-in-motion" : ""} ${hyperMode ? "hyper-table" : ""}`}
+            className={`game-table three-dimensional-table ${sceneReady ? "scene-rendered" : ""} ${animating ? "table-in-motion" : ""} ${hyperMode ? "hyper-table" : ""}`}
           >
+            <Scene
+              placement="table"
+              active={!ended && motionEnabled()}
+              intensity={hyperMode ? 1.8 : 0.92}
+              cardSkin={skin}
+              game={
+                {
+                  hyper: hyperMode,
+                  field: room.field,
+                  hand: room.hand,
+                  opponentHandCount: room.players[opponent]?.handCount || 0,
+                  deckCount: room.deckCount,
+                  drawnCard: room.drawnCard,
+                  phase: room.phase,
+                  turn: room.turn,
+                  eventId: flight?.event.id || room.events.at(-1)?.id || 0,
+                  eventCaptured: flight?.event.captured || room.events.at(-1)?.captured || false,
+                  eventCardId: flight?.event.cardId ?? null,
+                  eventTargetIds: flight?.event.targetIds || [],
+                  eventStage: flight?.stage || null,
+                  effectId: hyperMode
+                    ? (flight?.event.id || room.events.at(-1)?.id || 0) * 10
+                      + (room.hyper?.contracts.flat().length || 0)
+                    : flight?.event.id || room.events.at(-1)?.id || 0,
+                } as TableSceneState
+              }
+              onReady={handleSceneBackend}
+            />
             <div className="table-corner corner-one" />
             <div className="table-corner corner-two" />
             <div className="table-corner corner-three" />
             <div className="table-corner corner-four" />
-            {hyperMode && (
-              <>
-                <div className="hyper-stage-lights" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </div>
-                <HyperStageCards />
-              </>
-            )}
             {room.phase === "waiting" ? (
               <div className="waiting-table">
                 <span className="flower-mark">
@@ -1108,7 +1150,6 @@ export default function GameRoom({
                           {assist && canCapture && myTurn && (
                             <span
                               className="hand-match-dot"
-                              title="同じ月の場札があります"
                             />
                           )}
                         </div>
@@ -1116,15 +1157,6 @@ export default function GameRoom({
                     })
                   )}
                 </div>
-                {assist &&
-                  myTurn &&
-                  playing &&
-                  selected === null &&
-                  !animating && (
-                    <div className="hand-assist-legend">
-                      <span /> 光の印は、今取れる札がある手札です
-                    </div>
-                  )}
                 <PlayerBar
                   player={room.players[own]}
                   playerIndex={own}
@@ -1538,20 +1570,6 @@ function HyperContractCutIn({ cutIn }: { cutIn: HyperCutIn }) {
         <small>{cutIn.description}</small>
       </div>
       <div className="hyper-contract-cutin-seal" aria-hidden="true">契</div>
-    </div>
-  );
-}
-
-function HyperStageCards() {
-  const cardsOnStage = [8, 20, 28, 36, 44, 12];
-  return (
-    <div className="hyper-stage-cards" aria-hidden="true">
-      {cardsOnStage.map((id, index) => (
-        <div className={`hyper-stage-card hyper-stage-card-${index + 1}`} key={id}>
-          <Card id={id} />
-          <span>{index % 2 ? "連" : "契"}</span>
-        </div>
-      ))}
     </div>
   );
 }

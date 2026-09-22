@@ -39,6 +39,7 @@ export type HyperState = {
   stake: number[];
   bloom: number[];
   chain: number[];
+  sealed: number[][];
   options: HyperOption[];
 };
 export type RoomView = {

@@ -87,8 +87,7 @@
       "rival field self"
       "rival turn self"
       "rival selection self"
-      "rival hand self"
-      "rival legend self";
+      "rival hand self";
     column-gap: clamp(10px, 1.4vw, 24px);
     row-gap: 3px;
     padding: 17px;
@@ -102,7 +101,6 @@
   .enhanced-game .turn-banner { grid-area: turn; }
   .enhanced-game .selection-tray { grid-area: selection; }
   .enhanced-game .your-hand { grid-area: hand; }
-  .enhanced-game .hand-assist-legend { grid-area: legend; }
   .enhanced-game .capture-zone-own { grid-area: self; }
   .enhanced-game .capture-zone-opponent { grid-area: rival; }
   .enhanced-game .capture-zone {
@@ -222,9 +220,6 @@
     width: 54px;
     max-width: calc((100% - 42px) / 8);
   }
-  .enhanced-game .hand-assist-legend {
-    margin: 0;
-  }
   .enhanced-game .selection-tray {
     margin: 3px 0;
   }
@@ -263,9 +258,6 @@
     height: auto;
     min-height: 80px;
     padding: 8px 0 15px;
-  }
-  .enhanced-game .hand-assist-legend {
-    margin: 0 0 4px;
   }
 }
 
@@ -329,7 +321,6 @@
   .enhanced-game .field-cards .hana-card { width: 43px; }
   .enhanced-game .deck-pile > .hana-card { width: 32px; }
   .enhanced-game .turn-banner { font-size: 8px; padding: 5px; }
-  .enhanced-game .hand-assist-legend { display: none; }
   .enhanced-game .player-bar {
     min-height: 39px;
     padding: 3px 7px;
@@ -373,7 +364,6 @@
   .enhanced-game .your-hand.with-selection { min-height: 83px; padding: 6px 0 12px; gap: 5px; }
   .enhanced-game .hand-slot { width: 44px; max-width: calc((100% - 35px) / 8); }
   .enhanced-game .turn-banner { padding: 5px; font-size: 8px; }
-  .enhanced-game .hand-assist-legend { display: none; }
   .enhanced-game .captured-yaku { --pile-card-width: 33px; --pile-card-height: 52px; --pile-card-overlap: -18px; }
   .enhanced-game .captured-yaku-scroll { height: 61px; }
   .enhanced-game .captured-yaku-role { min-height: 14px; line-height: 13px; }

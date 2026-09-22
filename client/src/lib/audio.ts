@@ -1,4 +1,4 @@
-export type SoundKind = 'click' | 'deal' | 'capture' | 'win' | 'koikoi' | 'hyper';
+export type SoundKind = 'click' | 'deal' | 'capture' | 'hyper_capture' | 'hyper_chain' | 'win' | 'koikoi' | 'hyper';
 
 let context: AudioContext | undefined;
 let muted = false;
@@ -101,6 +101,26 @@ export function playSound(kind: SoundKind): void {
     case 'capture':
       brush(audio, at, 0.08);
       [440, 587.33, 880].forEach((f, i) => pluck(audio, f, at + i * 0.075, 0.15));
+      break;
+    case 'hyper_capture':
+      // A short impact followed by a rising metallic arpeggio makes every
+      // Hyper stack feel like a deliberate battle beat rather than a normal
+      // capture with a color filter.
+      drum(audio, at, 0.72);
+      drum(audio, at + 0.12, 0.44);
+      brush(audio, at + 0.04, 0.2);
+      [220, 293.66, 392, 523.25, 783.99, 1046.5].forEach((f, i) => {
+        pluck(audio, f, at + i * 0.045, 0.22);
+        tone(audio, f * 2, at + i * 0.045, 0.18, 0.045, 'sawtooth');
+      });
+      tone(audio, 1568, at + 0.34, 0.9, 0.13, 'triangle');
+      break;
+    case 'hyper_chain':
+      [261.63, 329.63, 440, 659.25, 880, 1318.51].forEach((f, i) => {
+        pluck(audio, f, at + i * 0.06, 0.17);
+        tone(audio, f * 1.5, at + i * 0.06, 0.25, 0.025, 'square');
+      });
+      tone(audio, 1760, at + 0.38, 1.1, 0.1, 'triangle');
       break;
     case 'koikoi':
       drum(audio, at);

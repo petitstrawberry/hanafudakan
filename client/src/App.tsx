@@ -410,12 +410,14 @@ export default function App() {
   const closeModal = useCallback(() => setModal(null), []);
   return (
     <div className="app-shell">
-      <Scene
-        active={motion}
-        cardSkin={cardSkin}
-        intensity={room?.hyperEnabled ? 1.8 : roomId ? 0.5 : 1}
-        onReady={setBackend}
-      />
+      {!roomId && (
+        <Scene
+          active={motion}
+          cardSkin={cardSkin}
+          intensity={1}
+          onReady={setBackend}
+        />
+      )}
       <aside className="sidebar">
         <a
           className="brand"
@@ -561,6 +563,7 @@ export default function App() {
                 send={send}
                 leave={leave}
                 copyInvite={copyInvite}
+                onBackend={setBackend}
               />
             ) : (
               <div className="connecting">
