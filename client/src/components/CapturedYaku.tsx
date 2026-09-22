@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { cardImage, cards, type CardKind } from "../lib/cards";
 import type { YakuStatus } from "../lib/yakuStatus";
 import "../captured-yaku.css";
@@ -63,17 +64,25 @@ export default function CapturedYaku({
               <h3>{group.label}</h3>
               <div
                 className={`captured-yaku-scroll ${pile.length ? "" : "captured-yaku-empty"}`}
-                aria-label={`${group.label}の取り札${pile.length > 1 ? "。横にスクロールして確認できます" : ""}`}
-                tabIndex={pile.length > 1 ? 0 : undefined}
+                aria-label={`${group.label}の取り札`}
               >
                 {pile.length ? (
-                  <div className="captured-yaku-fan">
-                    {pile.map((id) => (
+                  <div
+                    className="captured-yaku-fan"
+                    style={{
+                      "--pile-count": pile.length,
+                      "--pile-gap-count": Math.max(1, pile.length - 1),
+                    } as CSSProperties}
+                  >
+                    {pile.map((id, index) => (
                       <span
                         key={id}
                         className="captured-yaku-card"
                         data-captured-card-id={id}
+                        style={{ "--pile-index": index } as CSSProperties}
                         tabIndex={0}
+                        onPointerDown={(event) => event.currentTarget.focus({ preventScroll: true })}
+                        aria-label={`${cards[id].month}月・${cards[id].name}`}
                         title={`${cards[id].month}月・${cards[id].name}`}
                       >
                         <img

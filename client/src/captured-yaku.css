@@ -1,7 +1,6 @@
 .captured-yaku {
   --pile-card-width: 43px;
   --pile-card-height: 69px;
-  --pile-card-overlap: -24px;
   --pile-accent: #d2bb82;
   width: 100%;
   min-width: 0;
@@ -35,16 +34,15 @@
 .captured-yaku-group {
   min-width: 0;
   padding: 4px 5px 5px;
-  border: 1px solid #c9bf8224;
-  border-radius: 5px;
-  background: linear-gradient(180deg, #172c2094, #11201648);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #23362800, #101f1542 72%, #1521190d);
 }
 .captured-yaku-self .captured-yaku-group {
-  border-color: #d2bc7d38;
-  background: linear-gradient(180deg, #263728a3, #14291c61);
+  background: linear-gradient(180deg, #b5a06808, #162c1e4a 72%, #b5a0680a);
 }
 .captured-yaku-group h3 {
-  color: #a4af98;
+  color: #b8b999;
   font-size: 9px;
   font-weight: 500;
   line-height: 1;
@@ -52,42 +50,26 @@
   letter-spacing: 0.12em;
 }
 .captured-yaku-scroll {
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
   height: calc(var(--pile-card-height) + 9px);
   margin: 1px -2px 2px;
-  scrollbar-width: thin;
-  scrollbar-color: #aa986352 transparent;
-  overscroll-behavior-x: contain;
-  -webkit-overflow-scrolling: touch;
-}
-.captured-yaku-scroll::-webkit-scrollbar {
-  height: 3px;
-}
-.captured-yaku-scroll::-webkit-scrollbar-thumb {
-  border-radius: 3px;
-  background: #aa986352;
 }
 .captured-yaku-fan {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  width: max-content;
-  min-width: 100%;
-  padding: 6px 3px 2px;
+  --pile-step: min(calc(var(--pile-card-width) * 0.45), calc((100% - var(--pile-card-width) - 4px) / var(--pile-gap-count)));
+  position: relative;
+  width: 100%;
+  height: 100%;
 }
 .captured-yaku-card {
-  position: relative;
+  position: absolute;
+  top: 6px;
+  left: calc((100% - var(--pile-card-width) - var(--pile-step) * (var(--pile-count) - 1)) / 2 + var(--pile-step) * var(--pile-index));
   display: block;
-  flex: 0 0 var(--pile-card-width);
   width: var(--pile-card-width);
   height: var(--pile-card-height);
   border-radius: 2px;
-  box-shadow: -2px 2px 4px #06110880;
+  box-shadow: -1px 2px 3px #06110880;
   transition: transform 160ms ease, box-shadow 160ms ease;
-}
-.captured-yaku-card + .captured-yaku-card {
-  margin-left: var(--pile-card-overlap);
 }
 .captured-yaku-card img {
   display: block;
@@ -97,7 +79,7 @@
   object-fit: contain;
 }
 .captured-yaku-card:hover,
-.captured-yaku-card:focus-visible {
+.captured-yaku-card:focus {
   z-index: 2;
   transform: translateY(-4px);
   outline: 1px solid #efcf86;
@@ -111,9 +93,9 @@
 .captured-yaku-vacant {
   width: calc(var(--pile-card-width) - 5px);
   height: calc(var(--pile-card-height) - 7px);
-  border: 1px dashed #a8b38b24;
+  border: 1px solid #a8b38b12;
   border-radius: 2px;
-  background: #15261a30;
+  background: linear-gradient(135deg, #bcc78f08, transparent);
 }
 .captured-yaku-roles {
   display: flex;
@@ -160,13 +142,13 @@
   text-decoration-color: #92a185b3;
 }
 .captured-yaku-role.is-near {
-  color: #9fe1cf;
-  text-shadow: 0 0 10px #84d7b74f;
+  color: #adedd1;
+  text-shadow: 0 0 8px #84d7b75c;
 }
 .captured-yaku-role.is-complete {
-  color: #ffe1a0;
-  text-shadow: 0 0 10px #e9b44070;
-  background: #bda35412;
+  color: #ffe5ac;
+  text-shadow: 0 0 9px #e9b44085;
+  background: linear-gradient(90deg, transparent, #bda3541a, transparent);
 }
 .captured-yaku-role-mark {
   font-family: sans-serif;
@@ -180,7 +162,6 @@
   .captured-yaku {
     --pile-card-width: 29px;
     --pile-card-height: 46px;
-    --pile-card-overlap: -15px;
     margin: 5px 0;
   }
   .captured-yaku-owner {

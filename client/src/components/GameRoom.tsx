@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -27,6 +27,7 @@ import {
 import { cards, cardImage } from "../lib/cards";
 import { playSound } from "../lib/audio";
 import { getYakuStatuses } from "../lib/yakuStatus";
+import { fitFieldLayout } from "../lib/fieldLayout";
 import type { PublicGameEvent, RoomView } from "../lib/types";
 import "../game-enhancements.css";
 import "../game-layout.css";
@@ -119,6 +120,70 @@ export default function GameRoom({
   const submitLock = useRef(false);
   const [flight, setFlight] = useState<Flight | null>(null);
   const [landingCard, setLandingCard] = useState<number | null>(null);
+  const [fieldViewport, setFieldViewport] = useState({
+    width: 0,
+    height: 0,
+    maxCardWidth: 64,
+  });
+  const fieldCleanup = useRef<() => void>(() => {});
+  const bindFieldArea = useCallback((node: HTMLDivElement | null) => {
+    fieldCleanup.current();
+    fieldCleanup.current = () => {};
+    if (!node) return;
+    const measure = () => {
+      const style = window.getComputedStyle(node);
+      const width = Math.max(
+        0,
+        Math.floor(
+          (node.clientWidth -
+            (parseFloat(style.paddingLeft) || 0) -
+            (parseFloat(style.paddingRight) || 0)) *
+            10,
+        ) / 10,
+      );
+      const height = Math.max(
+        0,
+        Math.floor(
+          (node.clientHeight -
+            (parseFloat(style.paddingTop) || 0) -
+            (parseFloat(style.paddingBottom) || 0)) *
+            10,
+        ) / 10,
+      );
+      const maxCardWidth = window.innerWidth <= 600 ? 52 : 64;
+      setFieldViewport((current) =>
+        current.width === width &&
+        current.height === height &&
+        current.maxCardWidth === maxCardWidth
+          ? current
+          : { width, height, maxCardWidth },
+      );
+    };
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(measure);
+    observer?.observe(node);
+    window.addEventListener("resize", measure);
+    fieldCleanup.current = () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+  const fieldCardCount =
+    room.field.length +
+    Number(landingCard !== null && !room.field.includes(landingCard));
+  const fieldLayout = useMemo(
+    () =>
+      fitFieldLayout(
+        fieldCardCount,
+        fieldViewport.width,
+        fieldViewport.height,
+        fieldViewport.maxCardWidth,
+      ),
+    [fieldCardCount, fieldViewport],
+  );
   const [announcement, setAnnouncement] = useState("");
   const [celebration, setCelebration] = useState("");
   const [cue, setCue] = useState<Cue | null>(null);
@@ -811,9 +876,23 @@ export default function GameRoom({
                       </div>
                     )}
                   </div>
-                  <div className="field-area">
+                  <div className="field-area" ref={bindFieldArea}>
                     <span className="table-watermark">花札館</span>
-                    <div className="field-cards">
+                    <div
+                      className="field-cards"
+                      data-field-rows={fieldLayout.rows}
+                      data-field-cols={fieldLayout.columns}
+                      data-field-count={fieldCardCount}
+                      style={
+                        {
+                          "--field-card-width": `${fieldLayout.cardWidth}px`,
+                          "--field-card-height": `${fieldLayout.cardHeight}px`,
+                          "--field-cols": fieldLayout.columns,
+                          "--field-rows": fieldLayout.rows,
+                          "--field-gap": `${fieldLayout.gap}px`,
+                        } as CSSProperties
+                      }
+                    >
                       {room.field.map((id) => (
                         <div
                           className={`field-slot ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""}`}
