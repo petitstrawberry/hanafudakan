@@ -1,0 +1,375 @@
+/* Keep the cards central. Wide viewports place each player's captures beside
+   the field; portrait viewports preserve the opponent / field / self order. */
+.workspace:has(.enhanced-game) > .topbar {
+  height: 54px;
+}
+.workspace:has(.enhanced-game) > main {
+  max-width: 1600px;
+  padding-inline: 24px;
+}
+.workspace:has(.enhanced-game) > .footer {
+  display: none;
+}
+.enhanced-game.game-page {
+  padding: 12px 0 8px;
+}
+.enhanced-game .game-heading {
+  margin-bottom: 12px;
+  gap: 14px;
+}
+.enhanced-game .game-heading h1 {
+  font-size: 18px;
+}
+.enhanced-game .game-heading-actions {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+}
+.enhanced-game .game-layout {
+  display: block;
+}
+.enhanced-game .game-table {
+  min-height: 0;
+  margin: 0;
+}
+.enhanced-game .capture-zone {
+  min-width: 0;
+}
+.enhanced-game .game-underbar {
+  padding: 8px 0 2px;
+}
+.enhanced-game .game-chat-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.enhanced-game .game-side.game-conversation {
+  position: fixed;
+  right: 24px;
+  top: 116px;
+  z-index: 45;
+  width: min(330px, calc(100vw - 32px));
+  min-height: 0;
+  max-height: calc(100dvh - 140px);
+  overflow-y: auto;
+  border: 1px solid #b8a06566;
+  border-radius: 8px;
+  background: #15251af5;
+  box-shadow: 0 15px 50px #0009;
+}
+.enhanced-game .game-conversation .chat-panel {
+  height: min(340px, calc(100dvh - 230px));
+  min-height: 175px;
+}
+.enhanced-game .table-role-guide {
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+/* A landscape table uses both sides for the four capture categories. */
+@media (min-width: 700px) and (min-aspect-ratio: 6/5) {
+  .enhanced-game .game-table:not(:has(.waiting-table)) {
+    display: grid;
+    grid-template-columns: minmax(136px, 0.9fr) minmax(280px, 2.6fr) minmax(136px, 0.9fr);
+    grid-template-areas:
+      "opponent-player opponent-hand own-player"
+      "rival field self"
+      "rival turn self"
+      "rival selection self"
+      "rival hand self"
+      "rival legend self";
+    column-gap: clamp(10px, 1.4vw, 24px);
+    row-gap: 3px;
+    padding: 17px;
+    align-items: center;
+  }
+  .enhanced-game .opponent-player { grid-area: opponent-player; }
+  .enhanced-game .own-player { grid-area: own-player; }
+  .enhanced-game .opponent-hand { grid-area: opponent-hand; }
+  .enhanced-game .table-middle { grid-area: field; }
+  .enhanced-game .turn-banner { grid-area: turn; }
+  .enhanced-game .selection-tray { grid-area: selection; }
+  .enhanced-game .your-hand { grid-area: hand; }
+  .enhanced-game .hand-assist-legend { grid-area: legend; }
+  .enhanced-game .capture-zone-own { grid-area: self; }
+  .enhanced-game .capture-zone-opponent { grid-area: rival; }
+  .enhanced-game .capture-zone {
+    align-self: start;
+  }
+  .enhanced-game .captured-yaku {
+    margin: 0;
+  }
+  .enhanced-game .captured-yaku-owner {
+    display: none;
+  }
+  .enhanced-game .captured-yaku-groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .enhanced-game .captured-yaku-group {
+    padding: 5px 3px;
+  }
+  .enhanced-game .captured-yaku-role {
+    font-size: 11px;
+    letter-spacing: -0.04em;
+    min-height: 16px;
+    gap: 1px;
+    padding: 0;
+  }
+  .enhanced-game .player-bar {
+    width: 100%;
+    max-width: none;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 3px 6px;
+    padding: 5px;
+    margin: 0;
+    align-self: end;
+  }
+  .enhanced-game .player-bar .player-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+  .enhanced-game .player-bar .player-name {
+    min-width: 0;
+  }
+  .enhanced-game .player-bar .player-name strong {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+  }
+  .enhanced-game .player-bar .player-name strong small {
+    margin-left: 4px;
+  }
+  .enhanced-game .player-bar .player-name > span {
+    margin-top: 2px;
+    gap: 5px;
+  }
+  .enhanced-game .player-bar .player-score {
+    grid-column: 1 / -1;
+    font-size: 21px;
+    line-height: 1.2;
+  }
+  .enhanced-game .player-bar .koikoi-tag {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .enhanced-game .own-player {
+    text-align: right;
+    grid-template-columns: minmax(0, 1fr) 24px;
+  }
+  .enhanced-game .own-player .player-avatar {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .enhanced-game .own-player .player-name {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .enhanced-game .own-player .player-name > span {
+    justify-content: flex-end;
+  }
+  .enhanced-game .own-player .koikoi-tag {
+    justify-self: end;
+  }
+  .enhanced-game .opponent-hand {
+    margin: 3px 0 0;
+    height: 39px;
+  }
+  .enhanced-game .opponent-hand .hana-card {
+    width: 22px;
+    height: 35px;
+  }
+  .enhanced-game .table-middle {
+    min-width: 0;
+    min-height: 215px;
+    padding: 10px 0;
+    gap: 14px;
+  }
+  .enhanced-game .field-cards {
+    max-width: 460px;
+    gap: 10px 8px;
+  }
+  .enhanced-game .field-cards .hana-card {
+    width: clamp(39px, 3.7vw, 58px);
+  }
+  .enhanced-game .deck-pile > .hana-card {
+    width: clamp(35px, 3.2vw, 48px);
+  }
+  .enhanced-game .your-hand,
+  .enhanced-game .your-hand.with-selection {
+    height: auto;
+    min-height: 96px;
+    padding: 10px 0 14px;
+    gap: 6px;
+  }
+  .enhanced-game .hand-slot {
+    width: 54px;
+    max-width: calc((100% - 42px) / 8);
+  }
+  .enhanced-game .hand-assist-legend {
+    margin: 0;
+  }
+  .enhanced-game .selection-tray {
+    margin: 3px 0;
+  }
+}
+
+/* Portrait: four categories remain in a single row above and below the field. */
+@media (max-width: 699px), (max-aspect-ratio: 6/5) {
+  .enhanced-game .game-table {
+    padding: 12px 14px;
+  }
+  .enhanced-game .capture-zone .captured-yaku-owner {
+    display: none;
+  }
+  .enhanced-game .player-bar {
+    padding: 5px 8px;
+  }
+  .enhanced-game .opponent-player { margin-left: 0; }
+  .enhanced-game .own-player { margin-left: auto; margin-right: 0; text-align: right; }
+  .enhanced-game .own-player .player-name strong,
+  .enhanced-game .own-player .player-name > span { justify-content: flex-end; }
+  .enhanced-game .opponent-hand {
+    height: 30px;
+    margin-top: 4px;
+  }
+  .enhanced-game .opponent-hand .hana-card {
+    width: 17px;
+    height: 27px;
+  }
+  .enhanced-game .table-middle {
+    min-height: 155px;
+    padding: 9px 0;
+  }
+  .enhanced-game .your-hand,
+  .enhanced-game .your-hand.with-selection {
+    height: auto;
+    min-height: 80px;
+    padding: 8px 0 15px;
+  }
+  .enhanced-game .hand-assist-legend {
+    margin: 0 0 4px;
+  }
+}
+
+@media (max-width: 600px) {
+  .workspace:has(.enhanced-game) > main {
+    padding-inline: 10px;
+  }
+  .workspace:has(.enhanced-game) > .topbar {
+    height: 42px;
+  }
+  .enhanced-game.game-page {
+    padding-top: 7px;
+    padding-bottom: 70px;
+  }
+  .enhanced-game .game-heading {
+    gap: 6px 10px;
+    margin-bottom: 8px;
+  }
+  .enhanced-game .game-heading > .text-button {
+    width: auto;
+    font-size: 9px;
+  }
+  .enhanced-game .game-heading > div:not(.game-heading-actions) {
+    min-width: 0;
+    flex: 1;
+  }
+  .enhanced-game .game-heading h1 {
+    font-size: 14px;
+  }
+  .enhanced-game .game-heading > div > span {
+    margin-top: 3px;
+    font-size: 8px;
+  }
+  .enhanced-game .game-heading-actions {
+    flex: 0 0 100%;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .enhanced-game .game-heading-actions button {
+    padding: 5px 8px;
+    font-size: 9px;
+    min-height: 27px;
+  }
+  .enhanced-game .game-table {
+    padding: 9px 9px 11px;
+  }
+  .enhanced-game .player-avatar {
+    width: 23px;
+    height: 23px;
+    font-size: 12px;
+  }
+  .enhanced-game .player-score { font-size: 20px; }
+  .enhanced-game .table-middle { gap: 10px; }
+  .enhanced-game .field-cards { gap: 9px 7px; }
+  .enhanced-game .field-cards .hana-card { width: 43px; }
+  .enhanced-game .deck-pile > .hana-card { width: 32px; }
+  .enhanced-game .turn-banner { font-size: 8px; padding: 5px; }
+  .enhanced-game .hand-assist-legend { display: none; }
+  .enhanced-game .game-side.game-conversation {
+    right: 10px;
+    top: 106px;
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 188px);
+  }
+  .enhanced-game .game-conversation .chat-panel {
+    height: min(340px, calc(100dvh - 280px));
+  }
+}
+
+/* Short landscape windows trade decorative spacing for a complete table. */
+@media (min-width: 700px) and (min-aspect-ratio: 6/5) and (max-height: 700px) {
+  .workspace:has(.enhanced-game) > .topbar { height: 38px; }
+  .enhanced-game.game-page { padding-top: 6px; }
+  .enhanced-game .game-heading { margin-bottom: 7px; }
+  .enhanced-game .game-heading h1 { font-size: 15px; }
+  .enhanced-game .game-table:not(:has(.waiting-table)) { padding: 10px; row-gap: 1px; }
+  .enhanced-game .player-bar { padding: 3px 7px; }
+  .enhanced-game .player-avatar { width: 24px; height: 24px; font-size: 12px; }
+  .enhanced-game .player-score { font-size: 21px; }
+  .enhanced-game .opponent-hand { height: 27px; }
+  .enhanced-game .opponent-hand .hana-card { width: 16px; height: 25px; }
+  .enhanced-game .table-middle { min-height: 170px; padding: 5px 0; gap: 10px; }
+  .enhanced-game .field-cards { gap: 8px 7px; }
+  .enhanced-game .field-cards .hana-card { width: 46px; }
+  .enhanced-game .deck-pile > .hana-card { width: 37px; }
+  .enhanced-game .your-hand,
+  .enhanced-game .your-hand.with-selection { min-height: 83px; padding: 6px 0 12px; gap: 5px; }
+  .enhanced-game .hand-slot { width: 44px; max-width: calc((100% - 35px) / 8); }
+  .enhanced-game .turn-banner { padding: 5px; font-size: 8px; }
+  .enhanced-game .hand-assist-legend { display: none; }
+  .enhanced-game .captured-yaku { --pile-card-width: 33px; --pile-card-height: 52px; --pile-card-overlap: -18px; }
+  .enhanced-game .captured-yaku-scroll { height: 61px; }
+  .enhanced-game .captured-yaku-role { min-height: 14px; line-height: 13px; }
+  .enhanced-game .captured-yaku-owner { font-size: 9px; margin-bottom: 4px; }
+}
+@media (min-width: 700px) and (min-aspect-ratio: 6/5) and (max-height: 500px) {
+  .workspace:has(.enhanced-game) > .topbar { height: 28px; }
+  .enhanced-game .game-heading { min-height: 28px; gap: 8px; }
+  .enhanced-game .game-heading h1 { font-size: 13px; }
+  .enhanced-game .game-heading > div > span { margin-top: 2px; font-size: 8px; }
+  .enhanced-game .game-table:not(:has(.waiting-table)) { padding: 6px; column-gap: 9px; }
+  .enhanced-game .table-middle { min-height: 108px; }
+  .enhanced-game .field-cards .hana-card { width: 36px; }
+  .enhanced-game .deck-pile > .hana-card { width: 30px; }
+  .enhanced-game .your-hand,
+  .enhanced-game .your-hand.with-selection { min-height: 65px; }
+  .enhanced-game .hand-slot { width: 34px; }
+  .enhanced-game .game-heading-actions button { padding: 5px 7px; font-size: 9px; }
+  .enhanced-game .captured-yaku { --pile-card-width: 28px; --pile-card-height: 44px; --pile-card-overlap: -15px; }
+  .enhanced-game .captured-yaku-scroll { height: 51px; }
+  .enhanced-game .captured-yaku-role { min-height: 13px; line-height: 11px; }
+  .enhanced-game .captured-yaku-groups { gap: 4px; }
+  .enhanced-game .captured-yaku-group { padding: 3px 1px; }
+  .enhanced-game .captured-yaku-role-mark { position: absolute; right: 0; top: 0; font-size: 5px; }
+  .enhanced-game .captured-yaku-role.is-complete .captured-yaku-role-mark { font-size: 6px; }
+  .enhanced-game .player-bar { padding: 3px; gap: 1px 4px; }
+  .enhanced-game .player-bar .player-score { font-size: 18px; }
+  .enhanced-game .game-underbar { padding-top: 3px; }
+}

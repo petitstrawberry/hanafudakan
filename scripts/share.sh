@@ -40,8 +40,14 @@ case "${1:-status}" in
     fi
     exit 0
     ;;
+  refresh-ui)
+    live_process server && live_process tunnel || { echo '一時公開は停止中です。' >&2; exit 1; }
+    run_nix build --no-update-lock-file . --out-link "$STATE_DIR/package"
+    echo '公開中の画面を更新しました。ブラウザーを再読み込みしてください。'
+    exit 0
+    ;;
   start) ;;
-  *) echo 'Usage: ./scripts/share.sh start|status|stop' >&2; exit 2 ;;
+  *) echo 'Usage: ./scripts/share.sh start|status|stop|refresh-ui' >&2; exit 2 ;;
 esac
 if live_process tunnel && live_process server && [[ -s "$STATE_DIR/url" ]]; then
   printf '公開中: '; cat "$STATE_DIR/url"; exit 0
@@ -55,6 +61,7 @@ if command -v lsof >/dev/null && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 
 fi
 printf 'Nixで公開用パッケージをビルドしています…\n'
 run_nix build --no-update-lock-file . --out-link "$STATE_DIR/package"
+ln -sfn "$STATE_DIR/package/share/hanafudakan" "$STATE_DIR/www"
 TUNNEL_PACKAGE="$(run_nix build --no-update-lock-file --inputs-from . nixpkgs#cloudflared --no-link --print-out-paths)"
 cleanup_failure() { stop_process tunnel; stop_process server; rm -f "$STATE_DIR/url"; }
 trap cleanup_failure EXIT
@@ -73,7 +80,7 @@ for ((attempt=0; attempt<90; attempt++)); do
   sleep 1
 done
 [[ -n "$SHARE_URL" ]] || { echo '公開URLの作成がタイムアウトしました。' >&2; cleanup_failure; exit 1; }
-nohup env BIND_ADDR="127.0.0.1:$PORT" ALLOWED_ORIGIN="$SHARE_URL" RUST_LOG=info \
+nohup env BIND_ADDR="127.0.0.1:$PORT" ALLOWED_ORIGIN="$SHARE_URL" RUST_LOG=info STATIC_DIR="$STATE_DIR/www" \
   "$STATE_DIR/package/bin/hanafudakan-server" >"$STATE_DIR/server.log" 2>&1 < /dev/null &
 printf '%s\n' "$!" > "$STATE_DIR/server.pid"
 ps -p "$(cat "$STATE_DIR/server.pid")" -o lstart= > "$STATE_DIR/server.started"

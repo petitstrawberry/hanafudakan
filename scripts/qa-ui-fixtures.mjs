@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 const require = createRequire(import.meta.url);
@@ -13,7 +13,14 @@ const base = process.env.QA_BASE_URL || 'http://localhost:5173';
 const output = resolve('artifacts/qa');
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, ...(process.env.QA_CHROMIUM_PATH ? { executablePath: process.env.QA_CHROMIUM_PATH } : {}) });
-const report = { evidence: 'Supplemental browser UI evidence using synthetic RoomView fixtures and mocked HTTP/WebSocket traffic. Not real-server E2E.', startedAt: new Date().toISOString(), base, tests: [], pageErrors: [], unexpectedRequests: [], screenshots: [] };
+const targetedCases = process.env.QA_FIXTURE_CASES?.split(',');
+const report = targetedCases ? JSON.parse(await readFile(`${output}/fixture-report.json`, 'utf8')) : { evidence: 'Supplemental browser UI evidence using synthetic RoomView fixtures and mocked HTTP/WebSocket traffic. Not real-server E2E.', startedAt: new Date().toISOString(), base, tests: [], pageErrors: [], unexpectedRequests: [], screenshots: [] };
+if (targetedCases) {
+  const names = targetedCases.map(id => id === 'draw2' ? 'draw_choice explicitly chooses one of two targets' : `${Number(id.replace('hand', ''))} matching field cards`);
+  report.tests = report.tests.filter(test => !names.includes(test.name));
+  report.targetedReruns ||= [];
+  report.targetedReruns.push({ cases: targetedCases, startedAt: new Date().toISOString(), reason: 'Direct highlighted field-card selection replaces the former candidate tray' });
+}
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const until = async (predicate, label) => {
   for (let i = 0; i < 200; i++) { if (await predicate()) return; await pause(25); }
@@ -40,6 +47,7 @@ async function clientFor(room, viewport = { width: 1440, height: 1000 }) {
     localStorage.setItem('hana-sound', 'false');
     window.__fixtureAnimations = [];
     window.__fixtureGeometry = [];
+    window.__fixtureCaptureAnchors = [];
     let previous = '';
     new MutationObserver(() => {
       const overlay = document.querySelector('.move-overlay');
@@ -47,6 +55,18 @@ async function clientFor(room, viewport = { width: 1440, height: 1000 }) {
       if (!stage || stage === previous) { previous = stage; return; }
       previous = stage;
       window.__fixtureAnimations.push({ stage, targets: overlay.querySelectorAll('.target-copy').length, played: overlay.querySelectorAll('.played-copy').length, locked: document.querySelector('.game-page')?.getAttribute('data-animating'), enabledHandButtons: document.querySelectorAll('.your-hand button:not([disabled])').length });
+      if (stage === 'move-overlay move-collect') {
+        const bounds = element => { if (!element) return null; const b = element.getBoundingClientRect(); return { x: b.x, y: b.y, width: b.width, height: b.height }; };
+        const kindFor = id => [0, 8, 28, 40, 44].includes(id) ? 'bright' : [4, 12, 16, 20, 24, 29, 32, 36, 41].includes(id) ? 'animal' : [1, 5, 9, 13, 17, 21, 25, 33, 37, 42].includes(id) ? 'ribbon' : 'chaff';
+        for (const card of overlay.querySelectorAll('.flying-card')) {
+          const id = Number(card.querySelector('img').getAttribute('src').match(/\/(\d+)\.svg$/)[1]);
+          const style = getComputedStyle(card);
+          const width = parseFloat(style.getPropertyValue('--card-width'));
+          const pile = bounds(document.querySelector(`[data-capture-player="0"] [data-capture-kind="${kindFor(id)}"] .captured-yaku-scroll`));
+          const score = bounds(document.querySelector('[data-player-index="0"] .player-score'));
+          window.__fixtureCaptureAnchors.push({ id, kind: kindFor(id), centerX: parseFloat(style.getPropertyValue('--destination-x')) + width / 2, centerY: parseFloat(style.getPropertyValue('--destination-y')) + width * 380 / 240 / 2, pile, score, viewportHeight: innerHeight });
+        }
+      }
       const landing = document.querySelector('.field-landing-slot .hana-card');
       if (landing) {
         const bounds = element => { const b = element.getBoundingClientRect(); return { x: b.x, y: b.y, width: b.width, height: b.height }; };
@@ -92,19 +112,30 @@ async function runSelectionCase(matches, drawn = false) {
   const client = await clientFor(roomFixture(matches, drawn));
   const { page, room } = client;
   assert.equal(await page.getByTestId('confirm-play').count(), 0, 'No extra confirmation action');
+  assert.equal(await page.locator('.selection-tray, .target-option').count(), 0, 'Candidate panels must not be rendered');
   if (drawn) {
-    assert.equal(await page.locator('.draw-selection .target-option').count(), 2);
+    assert.equal(await page.locator('.field-cards .match-target button[data-card-id]').count(), 2);
     assert.equal(await page.locator('.drawn-card [data-card-id="0"]').count(), 1);
     assert.equal(client.commands.length, 0, 'draw_choice must await target selection');
     await capture(client, 'fixture-drawn-two-choice.png');
-    await page.locator('.target-option[data-target-id="2"]').click();
+    await page.locator('.field-cards .match-target button[data-card-id="2"]').click();
   } else {
     await page.locator('.your-hand [data-card-id="0"]').click();
     if (matches === 2) {
-      assert.equal(await page.locator('.target-option').count(), 2);
+      assert.equal(await page.locator('.selection-tray, .target-option').count(), 0);
       assert.equal(client.commands.length, 0, 'two matches must await target selection');
       assert.equal(await page.locator('.field-slot.match-target').count(), 2);
-      await page.locator('.target-option[data-target-id="2"]').click();
+      await page.locator('.turn-banner').getByRole('button', { name: '取消', exact: true }).click();
+      assert.equal(await page.locator('.field-slot.match-target').count(), 0, 'Cancel clears ambiguous hand selection');
+      assert.equal(client.commands.length, 0);
+      await page.locator('.your-hand [data-card-id="0"]').click();
+      assert.equal(await page.locator('.field-slot.match-target').count(), 2);
+      await page.locator('.your-hand [data-card-id="0"]').click();
+      assert.equal(await page.locator('.field-slot.match-target').count(), 0, 'Clicking the same hand card toggles selection off');
+      assert.equal(client.commands.length, 0);
+      await page.locator('.your-hand [data-card-id="0"]').click();
+      assert.equal(await page.locator('.field-cards .match-target button[data-card-id]').count(), 2);
+      await page.locator('.field-cards .match-target button[data-card-id="2"]').click();
     } else assert.equal(await page.locator('.selection-tray').count(), 0, 'unambiguous play needs no selection tray');
   }
   await until(() => client.commands.length === 1, 'exactly one command');
@@ -124,12 +155,20 @@ async function runSelectionCase(matches, drawn = false) {
   assert.ok(samples.some(s => s.stage === 'move-overlay move-travel'));
   if (matches) {
     for (const stage of ['stack', 'collect']) assert.ok(samples.some(s => s.stage === `move-overlay move-${stage}` && s.targets === targets.length && s.played === 1));
-    assert.equal(await page.locator('[data-capture-player="0"] .captured-cards img').count(), targets.length + 1);
+    assert.equal(await page.locator('[data-capture-player="0"] [data-captured-card-id]').count(), targets.length + 1);
+    const anchors = await page.evaluate(() => window.__fixtureCaptureAnchors);
+    assert.equal(anchors.length, targets.length + 1);
+    for (const anchor of anchors) {
+      const destination = anchor.pile.y >= 0 && anchor.pile.y + anchor.pile.height < anchor.viewportHeight ? anchor.pile : anchor.score;
+      assert.ok(destination && anchor.centerX >= destination.x - 1 && anchor.centerX <= destination.x + destination.width + 1 && anchor.centerY >= destination.y - 1 && anchor.centerY <= destination.y + destination.height + 1, `capture card ${anchor.id} destination must reach its ${anchor.kind} pile or own player score fallback`);
+    }
+    client.captureAnchors = anchors;
   }
   assert.ok(samples.every(s => s.locked === 'true' && s.enabledHandButtons === 0));
   assert.equal(await page.locator('.field-cards [data-card-id="0"]').count(), matches ? 0 : 1);
   assert.equal(client.commands.length, 1, 'animation must not issue duplicate commands');
-  report.tests.push({ name: drawn ? 'draw_choice explicitly chooses one of two targets' : `${matches} matching field cards`, status: 'passed', expectedCommand: expected, suppliedPublicEvent: next.events[0], animationSamples: samples });
+  assert.equal(await page.locator('.selection-tray, .target-option').count(), 0);
+  report.tests.push({ name: drawn ? 'draw_choice explicitly chooses one of two targets' : `${matches} matching field cards`, status: 'passed', expectedCommand: expected, suppliedPublicEvent: next.events[0], animationSamples: samples, captureAnchors: client.captureAnchors || [] });
   console.log(`PASS fixture ${drawn ? 'draw_choice' : `${matches} matches`}`);
   await client.context.close();
 }
@@ -174,10 +213,12 @@ async function runLandingGeometry(viewport) {
 }
 
 try {
-  for (const matches of [0, 1, 2, 3]) await runSelectionCase(matches);
-  await runSelectionCase(2, true);
-  await runLandingGeometry({ width: 1440, height: 1000 });
-  await runLandingGeometry({ width: 390, height: 844 });
+  for (const matches of [0, 1, 2, 3]) if (!targetedCases || targetedCases.includes(`hand${matches}`)) await runSelectionCase(matches);
+  if (!targetedCases || targetedCases.includes('draw2')) await runSelectionCase(2, true);
+  if (!targetedCases) {
+    await runLandingGeometry({ width: 1440, height: 1000 });
+    await runLandingGeometry({ width: 390, height: 844 });
+  }
   assert.deepEqual(report.pageErrors, []);
   assert.deepEqual(report.unexpectedRequests, []);
   report.status = 'passed';

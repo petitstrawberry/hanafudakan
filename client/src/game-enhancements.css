@@ -1082,3 +1082,240 @@ html[data-motion="false"] .move-overlay * {
   font-size: 9px;
   gap: 6px;
 }
+
+.role-detail {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 60;
+  width: min(300px, calc(100vw - 32px));
+  max-height: 50dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #bca16970;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #34402b, #17271d);
+  box-shadow:
+    0 12px 42px #0008,
+    0 0 0 1px #dfc89312;
+  animation: selection-enter 0.2s ease-out;
+}
+.role-detail-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.role-detail-title > span {
+  font-size: 8px;
+  color: #a6b594;
+  overflow-wrap: anywhere;
+}
+.role-detail-title > .icon-button {
+  width: 20px;
+  height: 20px;
+}
+.role-detail h3 {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 500;
+  color: #e5d09f;
+}
+.role-detail h3 > span {
+  font-family: inherit;
+  font-size: 11px;
+  align-self: center;
+  color: #c6b784;
+}
+.role-detail p {
+  font-size: 9px;
+  line-height: 1.9;
+  color: #aebc9c;
+  margin: 8px 0;
+}
+.role-detail-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.role-detail-cards > span {
+  position: relative;
+  border: 1px solid #6d835755;
+  border-radius: 3px;
+  overflow: hidden;
+  width: 25px;
+  aspect-ratio: 240/380;
+  display: block;
+  background: #102013;
+}
+.role-detail-cards img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.role-detail-cards .role-card-in-field {
+  border-color: #e5c582;
+  box-shadow: 0 0 9px #c5ad6550;
+}
+.role-detail-cards .role-card-blocked img {
+  opacity: 0.25;
+  filter: grayscale(0.7);
+}
+.role-detail-cards .role-card-blocked > svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #d8b99c;
+}
+.role-detail > small {
+  display: block;
+  margin-top: 9px;
+  font-size: 7px;
+  color: #8c9f7c;
+  line-height: 1.8;
+}
+.role-detail-impossible h3 {
+  text-decoration: line-through;
+  color: #a7a18b;
+}
+@media (max-width: 800px) {
+  .role-detail {
+    padding: 14px;
+  }
+  .role-detail-cards > span {
+    width: 31px;
+  }
+  .role-detail-title > span,
+  .role-detail p {
+    font-size: 10px;
+  }
+  .role-detail > small {
+    font-size: 9px;
+  }
+}
+@media (max-width: 600px) {
+  .role-detail {
+    right: 12px;
+    bottom: calc(80px + env(safe-area-inset-bottom));
+    width: min(320px, calc(100vw - 24px));
+    max-height: 40dvh;
+  }
+}
+
+/* Table-bound captured piles keep the play area compact and readable. */
+.enhanced-game .game-table {
+  padding: 17px 23px;
+}
+.enhanced-game .opponent-hand {
+  height: 44px;
+  margin-top: 8px;
+  gap: 4px;
+}
+.enhanced-game .opponent-hand .hana-card {
+  width: 24px;
+  height: 38px;
+}
+.enhanced-game .table-middle {
+  min-height: 188px;
+  padding: 14px 0;
+}
+.enhanced-game .your-hand {
+  height: 118px;
+  padding-top: 13px;
+  padding-bottom: 13px;
+}
+.enhanced-game .your-hand.with-selection {
+  height: 112px;
+}
+.game-conversation {
+  min-height: 0;
+}
+.game-conversation .chat-panel {
+  height: 340px;
+}
+.table-role-guide {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 16px;
+  border-top: 1px solid var(--line);
+  color: #a2b18b;
+}
+.table-role-guide svg {
+  flex-shrink: 0;
+  color: var(--gold);
+}
+.table-role-guide p {
+  font-size: 9px;
+  line-height: 1.9;
+}
+.table-cutin-anchor {
+  position: fixed;
+  z-index: 65;
+  pointer-events: none;
+  border-radius: 12px;
+}
+@media (max-width: 800px) {
+  .game-conversation .chat-panel {
+    height: 270px;
+  }
+}
+@media (max-width: 600px) {
+  .enhanced-game .game-table {
+    padding: 13px 12px 12px;
+  }
+  .enhanced-game .opponent-hand {
+    height: 28px;
+    margin-top: 5px;
+    gap: 3px;
+  }
+  .enhanced-game .opponent-hand .hana-card {
+    width: 15px;
+    height: 24px;
+  }
+  .enhanced-game .table-middle {
+    min-height: 160px;
+    padding: 9px 0;
+    gap: 12px;
+  }
+  .enhanced-game .field-cards {
+    gap: 12px 8px;
+  }
+  .enhanced-game .your-hand,
+  .enhanced-game .your-hand.with-selection {
+    height: 93px;
+    padding-top: 10px;
+    padding-bottom: 12px;
+    gap: 4px;
+  }
+  .enhanced-game .hand-slot {
+    max-width: calc((100% - 28px) / 8);
+  }
+  .enhanced-game .hand-assist-legend {
+    margin-top: 0;
+    margin-bottom: 7px;
+  }
+  .enhanced-game .turn-banner {
+    min-height: 31px;
+    font-size: 8px;
+    padding: 5px;
+  }
+  .enhanced-game .player-bar {
+    padding: 5px 8px;
+  }
+  .enhanced-game .player-score {
+    font-size: 20px;
+  }
+  .enhanced-game .player-avatar {
+    width: 25px;
+    height: 25px;
+  }
+}

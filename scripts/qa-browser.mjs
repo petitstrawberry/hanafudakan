@@ -96,12 +96,12 @@ async function playMove(client) {
     await page.locator(`.your-hand button[data-card-id="${card}"]`).click();
     report.selectionCases[targets.length] = (report.selectionCases[targets.length] || 0) + 1;
     if (targets.length === 2) {
-      await page.locator('.selection-tray').waitFor();
+      await page.locator('.field-slot.match-target button').first().waitFor();
       assert.equal(client.sent.length, sentBeforeSelection, 'ambiguous two-target capture must wait for the chosen target');
       assert.equal(await page.locator('.field-slot.match-target').count(), 2);
-      assert.equal(await page.locator('.target-option').count(), 2);
+      assert.equal(await page.locator('.selection-tray,.target-option').count(), 0);
       if (report.selectionCases[2] === 1) await screenshot(client, 'matching-two-card-selection');
-      await page.locator(`.target-option[data-target-id="${targets[0]}"]`).click();
+      await page.locator(`.field-cards button[data-card-id="${targets[0]}"]`).click();
     } else {
       await waitFor(() => client.sent.length > sentBeforeSelection, 'unambiguous hand click automatically submits');
       assert.equal(await page.getByTestId('confirm-play').count(), 0);
@@ -114,10 +114,11 @@ async function playMove(client) {
     }
   } else if (state.phase === 'draw_choice') {
     const target = state.legalTargets[0];
-    assert.equal(await page.locator('.draw-selection .target-option').count(), 2);
+    assert.equal(await page.locator('.field-slot.match-target button').count(), 2);
+    assert.equal(await page.locator('.selection-tray,.target-option').count(), 0);
     if (!report.drawnChoices) await screenshot(client, 'drawn-two-card-selection');
     report.drawnChoices++;
-    await page.locator(`.target-option[data-target-id="${target}"]`).click();
+    await page.locator(`.field-cards button[data-card-id="${target}"]`).click();
   } else if (state.phase === 'decision') {
     await page.getByRole('button', { name: 'あがる', exact: true }).click();
   } else throw new Error(`Unexpected move phase ${state.phase}`);

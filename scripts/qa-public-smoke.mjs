@@ -80,7 +80,7 @@ try {
   await page.locator(`.your-hand [data-card-id="${move.cardId}"]`).click();
   if (move.targets.length === 2) {
     assert.equal(report.sentCommands.length, sentBefore, 'ambiguous capture awaits explicit candidate');
-    await page.locator(`.target-option[data-target-id="${move.targets[0]}"]`).click();
+    await page.locator(`.field-cards button[data-card-id="${move.targets[0]}"]`).click();
   }
   await until(() => version > before && state.hand.length < initial.hand.length, 'actual WSS state accepts hand move');
   const played = report.sentCommands.slice(sentBefore).find(command => command.type === 'play');

@@ -13,3 +13,5 @@
 /artifacts/
 /playwright-report/
 /test-results/
+
+/.omo/

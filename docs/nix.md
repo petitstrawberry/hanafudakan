@@ -18,16 +18,18 @@ Git チェックアウトでは、Nix が参照するファイルは Git で追�
 
 | コマンド | 内容 |
 | --- | --- |
-| `nix develop` | Rust・Cargo・rustfmt・Clippy・Node.js・npm の開発シェル |
+| `nix develop` | Rust・Cargo・rustfmt・Clippy・Node.js・npm・tsx の開発シェル |
 | `nix build .` | サーバーと Web をまとめた実行パッケージを `result` に出力 |
 | `nix run .` | 統合パッケージをビルドして起動 |
 | `nix build .#server` | Rust サーバー単体。静的ファイルの場所は別途指定 |
 | `nix build .#client` | Web の静的ファイルを `result` 直下に出力 |
 | `nix build .#container` | Docker 用の実行パッケージ・curl・CA 証明書 |
-| `nix flake check` | 現在のプラットフォームでサーバーのテストと Web の型検査・ビルド |
+| `nix flake check` | 現在のプラットフォームで Rust と役表示のテスト、Web の型検査・ビルド |
 | `nix fmt flake.nix` | flake の整形 |
 
 `nix build` はソースツリーの `node_modules` を使わず、依存を Nix で取得してサンドボックス内でビルドします。開発シェルで Vite を使う場合は、初回に `cd client && npm ci` を実行してください。
+
+クライアントの役表示テストは、開発シェル内で `npm --prefix client test` を実行します。Nix が用意する tsx で TypeScript のテストを動かし、公開済みの取り札だけを使った成立可能性・上位役・盃の二重計数などを確認します。
 
 ## 固定されるもの
 

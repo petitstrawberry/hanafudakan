@@ -9,7 +9,6 @@ import {
   Cpu,
   Eye,
   Flower2,
-  Layers3,
   MessageCircle,
   Plus,
   ShieldCheck,
@@ -18,10 +17,19 @@ import {
   X,
 } from "lucide-react";
 import Card from "./Card";
-import { cards, cardImage, MONTHS } from "../lib/cards";
+import CapturedYaku from "./CapturedYaku";
+import { YakuCutIn } from "./YakuCutIn";
+import {
+  buildYakuAnnouncements,
+  yakuAnnouncementDuration,
+  type YakuAnnouncement,
+} from "../lib/yakuAnnouncements";
+import { cards, cardImage } from "../lib/cards";
 import { playSound } from "../lib/audio";
+import { getYakuStatuses } from "../lib/yakuStatus";
 import type { PublicGameEvent, RoomView } from "../lib/types";
 import "../game-enhancements.css";
+import "../game-layout.css";
 
 type Props = {
   room: RoomView;
@@ -35,23 +43,22 @@ type Props = {
 // Neither the opponent's remaining hand nor the stock is part of this protocol.
 type PublicMove = PublicGameEvent;
 type AnimatedRoom = RoomView & { events?: PublicMove[] };
+type Cue = {
+  announcement: YakuAnnouncement;
+  playerName: string;
+  sequence: number;
+  reducedMotion: boolean;
+  position: { left: number; top: number; width: number; height: number };
+};
 type Position = { x: number; y: number; width: number; height: number };
 type Flight = {
   event: PublicMove;
   source: Position;
   target: Position;
   destination: Position;
-  targets: { id: number; position: Position }[];
+  targets: { id: number; position: Position; destination: Position }[];
   stage: "reveal" | "travel" | "stack" | "settle" | "collect";
   duration: number;
-};
-type YakuCandidate = {
-  name: string;
-  points: number;
-  ids: number[];
-  need: number;
-  have: number;
-  missing: number[];
 };
 const nameOf = (id: number) => cards[id]?.name || "花札";
 const sameMonth = (left: number, right: number) =>
@@ -78,66 +85,6 @@ const paint = () =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
 
-function candidatesFor(
-  captured: number[],
-  earned: RoomView["yaku"][number] = [],
-): YakuCandidate[] {
-  const held = new Set(captured);
-  const definitions = [
-    { name: "猪鹿蝶", points: 5, ids: [20, 24, 36], need: 3 },
-    { name: "花見で一杯", points: 5, ids: [8, 32], need: 2 },
-    { name: "月見で一杯", points: 5, ids: [28, 32], need: 2 },
-    { name: "赤短", points: 5, ids: [1, 5, 9], need: 3 },
-    { name: "青短", points: 5, ids: [21, 33, 37], need: 3 },
-    { name: "三光", points: 5, ids: [0, 8, 28, 44], need: 3 },
-    { name: "四光", points: 8, ids: [0, 8, 28, 44], need: 4 },
-    { name: "雨四光", points: 7, ids: [0, 8, 28, 40, 44], need: 4 },
-    { name: "五光", points: 10, ids: [0, 8, 28, 40, 44], need: 5 },
-    {
-      name: "たね",
-      points: 1,
-      ids: cards.filter((c) => c.kind === "animal").map((c) => c.id),
-      need: 5,
-    },
-    {
-      name: "たん",
-      points: 1,
-      ids: cards.filter((c) => c.kind === "ribbon").map((c) => c.id),
-      need: 5,
-    },
-    {
-      name: "かす",
-      points: 1,
-      ids: cards
-        .filter((c) => c.kind === "chaff" || c.id === 32)
-        .map((c) => c.id),
-      need: 10,
-    },
-  ];
-  return definitions
-    .filter((y) => !held.has(40) || (y.name !== "三光" && y.name !== "四光"))
-    .map((y) => {
-      const nonRainCount = [0, 8, 28, 44].filter((id) => held.has(id)).length;
-      const have =
-        y.name === "雨四光"
-          ? Math.min(3, nonRainCount) + (held.has(40) ? 1 : 0)
-          : y.ids.filter((id) => held.has(id)).length;
-      const missing =
-        y.name === "雨四光" && !held.has(40) && nonRainCount >= 3
-          ? [40]
-          : y.ids.filter((id) => !held.has(id));
-      return { ...y, have, missing };
-    })
-    .filter((y) => y.have < y.need && !earned.some((e) => e.name === y.name))
-    .sort(
-      (a, b) =>
-        b.have / b.need - a.have / a.need ||
-        a.need - a.have - (b.need - b.have) ||
-        b.points - a.points,
-    )
-    .slice(0, 4);
-}
-
 function positionOf(element: Element | null, fallback: Position): Position {
   if (!element) return fallback;
   const rect = element.getBoundingClientRect();
@@ -162,7 +109,11 @@ export default function GameRoom({
     () => localStorage.getItem("hana-assist") !== "false",
   );
   const [chat, setChat] = useState("");
-  const [panel, setPanel] = useState<"yaku" | "chat">("yaku");
+  const [showChat, setShowChat] = useState(false);
+  const [roleDetail, setRoleDetail] = useState<{
+    player: number;
+    id: string;
+  } | null>(null);
   const [animating, setAnimating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submitLock = useRef(false);
@@ -170,10 +121,19 @@ export default function GameRoom({
   const [landingCard, setLandingCard] = useState<number | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [celebration, setCelebration] = useState("");
+  const [cue, setCue] = useState<Cue | null>(null);
+  const cueSequence = useRef(0);
+  const announcedRoles = useRef(
+    incoming.yaku.map(
+      (roles) => new Map(roles.map((role) => [role.name, role.points])),
+    ),
+  );
+  const reconnectPending = useRef(false);
+  const playbackEpoch = useRef(0);
   const table = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLElement>(null);
   const chatBottom = useRef<HTMLDivElement>(null);
-  const queue = useRef<AnimatedRoom[]>([]);
+  const queue = useRef<{ room: AnimatedRoom; resync: boolean }[]>([]);
   const processing = useRef(false);
   const alive = useRef(true);
   const lastEvent = useRef(
@@ -188,7 +148,8 @@ export default function GameRoom({
   const drawnChoice = room.phase === "draw_choice";
   const deciding = room.phase === "decision";
   const ended = room.phase === "round_end" || room.phase === "finished";
-  const locked = !connected || busy || animating || submitting;
+  const locked =
+    !connected || reconnectPending.current || busy || animating || submitting;
   const canPlay = myTurn && playing && !locked;
   const activeCard = drawnChoice ? room.drawnCard : selected;
   const targets =
@@ -200,10 +161,20 @@ export default function GameRoom({
     assist && hoverCard !== null
       ? room.field.filter((id) => sameMonth(id, hoverCard))
       : [];
-  const yakuCandidates = useMemo(
-    () => candidatesFor(room.players[own]?.captured || [], room.yaku[own]),
-    [room.players, room.yaku, own],
+  const yakuByPlayer = useMemo(
+    () =>
+      room.players.map((player, index) =>
+        getYakuStatuses(
+          player.captured,
+          room.players[1 - index]?.captured || [],
+          room.yaku[index] || [],
+        ),
+      ),
+    [room.players, room.yaku],
   );
+  const detailedRole = roleDetail
+    ? yakuByPlayer[roleDetail.player]?.find((role) => role.id === roleDetail.id)
+    : undefined;
   const resultWinner =
     room.phase === "finished" ? room.matchWinner : room.winner;
 
@@ -222,11 +193,22 @@ export default function GameRoom({
     setHovered(null);
   }, [room.round, room.turn, room.phase, room.hand.join(",")]);
   useEffect(() => {
+    setRoleDetail(null);
+  }, [room.round]);
+  useEffect(() => {
+    if (!roleDetail || !assist) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setRoleDetail(null);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [roleDetail, assist]);
+  useEffect(() => {
     chatBottom.current?.scrollIntoView({
       block: "nearest",
       behavior: motionEnabled() ? "smooth" : "instant",
     });
-  }, [incoming.messages.length, panel]);
+  }, [incoming.messages.length, showChat]);
   useEffect(() => {
     if (!submitting) return;
     // A rejected action keeps the same game snapshot. Release the lock so the
@@ -244,12 +226,28 @@ export default function GameRoom({
   }, [celebration]);
 
   useEffect(() => {
+    if (!connected) {
+      reconnectPending.current = true;
+      playbackEpoch.current++;
+      queue.current = [];
+      setCue(null);
+      setFlight(null);
+      setLandingCard(null);
+    }
+  }, [connected]);
+
+  useEffect(() => {
+    // A retained room shown while offline is not a restored server snapshot.
+    // Keep the resync marker until the first fresh message after reconnect.
+    if (!connected) return;
     const next = incoming as AnimatedRoom;
+    const resync = reconnectPending.current;
+    reconnectPending.current = false;
     const nextSignature = signature(next);
     const hasUnseen = (next.events || []).some(
       (event) => event.id > lastEvent.current,
     );
-    if (nextSignature === receivedSignature.current && !hasUnseen) {
+    if (nextSignature === receivedSignature.current && !hasUnseen && !resync) {
       if (!processing.current) {
         displayed.current = next;
         setRoom(next);
@@ -257,7 +255,11 @@ export default function GameRoom({
       return;
     }
     receivedSignature.current = nextSignature;
-    queue.current.push(next);
+    if (resync) {
+      queue.current = [];
+      playbackEpoch.current++;
+    }
+    queue.current.push({ room: next, resync });
     if (processing.current) return;
     processing.current = true;
     setAnimating(true);
@@ -267,14 +269,14 @@ export default function GameRoom({
       displayed.current = value;
       setRoom(value);
     };
-    const runEvent = async (event: PublicMove) => {
+    const runEvent = async (event: PublicMove, epoch: number) => {
       const before = displayed.current;
       const placing = !event.captured && !event.requiresChoice;
       // Reserve exactly the appended field slot before measuring. This also
       // gives wrapping rows room to settle before the card starts travelling.
       setLandingCard(placing ? event.cardId : null);
       await paint();
-      if (!alive.current) return;
+      if (!alive.current || epoch !== playbackEpoch.current) return;
       const cardWidth =
         table.current
           ?.querySelector(".field-cards .hana-card")
@@ -316,12 +318,30 @@ export default function GameRoom({
             center,
           )
         : targetPositions[0]?.position || center;
-      const destination = positionOf(
-        root.current?.querySelector(
-          `[data-capture-player="${event.player}"]`,
-        ) || null,
-        { ...center, y: center.y + (isOwn ? 200 : -130) },
-      );
+      const destinationFor = (id: number): Position => {
+        const pile = root.current?.querySelector(
+          `[data-capture-player="${event.player}"] [data-capture-kind="${cards[id].kind}"] .captured-yaku-scroll`,
+        );
+        const pileBounds = pile?.getBoundingClientRect();
+        const visible =
+          pileBounds &&
+          pileBounds.top >= 0 &&
+          pileBounds.bottom < window.innerHeight;
+        const anchor = positionOf(
+          (visible
+            ? pile
+            : table.current?.querySelector(
+                `[data-player-index="${event.player}"] .player-score`,
+              )) || null,
+          { ...center, y: center.y + (isOwn ? 200 : -130) },
+        );
+        return {
+          ...anchor,
+          x: anchor.x + anchor.width / 2 - target.width / 2,
+          y: anchor.y + anchor.height / 2 - target.height / 2,
+        };
+      };
+      const destination = destinationFor(event.cardId);
       const animate = motionEnabled();
       const timing = animate
         ? { reveal: 350, travel: 430, stack: 450, collect: 450 }
@@ -331,7 +351,10 @@ export default function GameRoom({
         source,
         target,
         destination,
-        targets: targetPositions,
+        targets: targetPositions.map((item) => ({
+          ...item,
+          destination: destinationFor(item.id),
+        })),
         duration: timing.travel,
       };
       setAnnouncement(
@@ -345,12 +368,12 @@ export default function GameRoom({
         );
         playSound("deal");
         await sleep(timing.reveal);
-        if (!alive.current) return;
+        if (!alive.current || epoch !== playbackEpoch.current) return;
       }
       if (!event.requiresChoice) {
         setFlight(animate ? { ...base, stage: "travel" } : null);
         await sleep(timing.travel);
-        if (!alive.current) return;
+        if (!alive.current || epoch !== playbackEpoch.current) return;
         const settleDuration = event.captured
           ? timing.stack
           : animate
@@ -366,7 +389,7 @@ export default function GameRoom({
             : null,
         );
         await sleep(settleDuration);
-        if (!alive.current) return;
+        if (!alive.current || epoch !== playbackEpoch.current) return;
         if (event.captured) {
           playSound("capture");
           setFlight(
@@ -375,9 +398,10 @@ export default function GameRoom({
               : null,
           );
           await sleep(timing.collect);
-          if (!alive.current) return;
+          if (!alive.current || epoch !== playbackEpoch.current) return;
         }
       } else await sleep(180);
+      if (!alive.current || epoch !== playbackEpoch.current) return;
       const hand =
         event.source === "hand" && isOwn
           ? before.hand.filter((id) => id !== event.cardId)
@@ -404,7 +428,8 @@ export default function GameRoom({
     void (async () => {
       try {
         while (queue.current.length && alive.current) {
-          const nextRoom = queue.current.shift()!;
+          const { room: nextRoom, resync: restoring } = queue.current.shift()!;
+          const epoch = playbackEpoch.current;
           const previous = displayed.current;
           const events = (nextRoom.events || []).filter(
             (event) => event.id > lastEvent.current,
@@ -416,10 +441,12 @@ export default function GameRoom({
           // Resynchronise rather than reconstructing an incomplete history after
           // a long disconnection or while starting a fresh round.
           const continuous =
-            !events.length || events[0].id === lastEvent.current + 1;
+            !restoring &&
+            (!events.length || events[0].id === lastEvent.current + 1);
           if (!roundChanged && continuous) {
             for (const event of events) {
-              await runEvent(event);
+              await runEvent(event, epoch);
+              if (epoch !== playbackEpoch.current) break;
               lastEvent.current = event.id;
             }
           } else {
@@ -427,15 +454,42 @@ export default function GameRoom({
             setCelebration("");
           }
           if (!alive.current) return;
+          if (epoch !== playbackEpoch.current) {
+            setFlight(null);
+            setLandingCard(null);
+            setCue(null);
+            continue;
+          }
           lastEvent.current = Math.max(
             lastEvent.current,
             ...events.map((event) => event.id),
           );
-          const gainedYaku = nextRoom.yaku.some(
-            (set, i) =>
-              set.reduce((sum, y) => sum + y.points, 0) >
-              (previous.yaku[i] || []).reduce((sum, y) => sum + y.points, 0),
-          );
+          const announce = !roundChanged && continuous;
+          if (!announce)
+            announcedRoles.current = nextRoom.yaku.map(
+              (roles) => new Map(roles.map((role) => [role.name, role.points])),
+            );
+          const cues = announce
+            ? nextRoom.yaku.flatMap((roles, player) =>
+                buildYakuAnnouncements(
+                  Array.from(
+                    announcedRoles.current[player] || [],
+                    ([name, points]) => ({ name, points }),
+                  ),
+                  roles,
+                  nextRoom.players[player]?.captured || [],
+                ).map((announcement) => ({ announcement, player })),
+              )
+            : [];
+          nextRoom.yaku.forEach((roles, player) => {
+            const baseline = (announcedRoles.current[player] ||= new Map());
+            roles.forEach((role) =>
+              baseline.set(
+                role.name,
+                Math.max(baseline.get(role.name) || 0, role.points),
+              ),
+            );
+          });
           const calledKoikoi = nextRoom.koikoi.some(
             (count, index) => count > (previous.koikoi[index] || 0),
           );
@@ -444,23 +498,64 @@ export default function GameRoom({
           setSelected(null);
           submitLock.current = false;
           setSubmitting(false);
-          if (calledKoikoi) {
+          await paint();
+          if (epoch !== playbackEpoch.current) continue;
+          if (calledKoikoi && announce) {
             setCelebration("こいこい！");
             playSound("koikoi");
-          } else if (gainedYaku && !roundChanged) {
-            setCelebration("役、成立。");
-            playSound("win");
-          } else if (
-            nextRoom.phase === "round_end" ||
-            nextRoom.phase === "finished"
-          )
-            playSound("win");
-          await paint();
-          if (
-            calledKoikoi ||
-            (gainedYaku && nextRoom.turn !== nextRoom.myIndex)
-          )
             await sleep(motionEnabled() ? 650 : 150);
+          }
+          for (const item of cues) {
+            if (!alive.current) return;
+            if (epoch !== playbackEpoch.current) break;
+            const bounds = table.current?.getBoundingClientRect();
+            const field = table.current
+              ?.querySelector(".table-middle")
+              ?.getBoundingClientRect();
+            const height = Math.max(
+              180,
+              Math.min(420, window.innerHeight - 160),
+            );
+            const width = Math.min(
+              bounds?.width || 500,
+              window.innerWidth - 24,
+            );
+            const left = Math.max(
+              12,
+              Math.min(bounds?.left || 12, window.innerWidth - width - 12),
+            );
+            const top = Math.max(
+              68,
+              Math.min(
+                (field?.top || 100) + (field?.height || 200) / 2 - height / 2,
+                window.innerHeight - height - 82,
+              ),
+            );
+            const reducedMotion = !motionEnabled();
+            setCue({
+              ...item,
+              playerName: nextRoom.players[item.player]?.name || "プレイヤー",
+              sequence: ++cueSequence.current,
+              reducedMotion,
+              position: { left, top, width, height },
+            });
+            playSound(item.announcement.kind === "role" ? "win" : "capture");
+            await sleep(
+              yakuAnnouncementDuration(item.announcement, reducedMotion),
+            );
+            if (!alive.current) return;
+            setCue(null);
+            if (epoch !== playbackEpoch.current) break;
+            await paint();
+          }
+          if (
+            epoch === playbackEpoch.current &&
+            !cues.length &&
+            announce &&
+            (nextRoom.phase === "round_end" || nextRoom.phase === "finished") &&
+            previous.phase !== nextRoom.phase
+          )
+            playSound("win");
         }
       } finally {
         processing.current = false;
@@ -468,6 +563,7 @@ export default function GameRoom({
           if (signature(latest.current) === signature(displayed.current))
             updateView(latest.current);
           setAnimating(false);
+          setCue(null);
           setFlight(null);
           setLandingCard(null);
           setAnnouncement("");
@@ -525,7 +621,7 @@ export default function GameRoom({
               ? drawnChoice
                 ? "めくり札です。取る場札を1枚選んでください。"
                 : selected !== null
-                  ? "同じ月が2枚。取る方を選んでください。"
+                  ? "光っている場札を1枚選んでください。"
                   : "あなたの番です。手札を1枚選んでください。"
               : `${room.players[room.turn]?.name || "対戦相手"}の番です`;
   const sendChat = (event: FormEvent) => {
@@ -535,16 +631,33 @@ export default function GameRoom({
       setChat("");
     }
   };
-  const showSelection =
-    myTurn &&
-    activeCard !== null &&
-    targets.length === 2 &&
-    (playing || drawnChoice) &&
-    !animating;
   const points = (room.yaku[own] || []).reduce((sum, y) => sum + y.points, 0);
   const multiplier =
     (points >= 7 ? 2 : 1) * (room.koikoi[opponent] > 0 ? 2 : 1);
   const exhausted = room.players.every((player) => player.handCount === 0);
+
+  const renderCaptured = (index: number) =>
+    room.players[index] && (
+      <CapturedYaku
+        playerIndex={index}
+        playerName={room.players[index].name}
+        captured={room.players[index].captured}
+        statuses={yakuByPlayer[index]}
+        self={me === index}
+        spectator={me === null}
+        assist={assist}
+        selectedRoleId={
+          roleDetail?.player === index ? roleDetail.id : undefined
+        }
+        onRoleSelect={(id) =>
+          setRoleDetail((current) =>
+            current?.player === index && current.id === id
+              ? null
+              : { player: index, id },
+          )
+        }
+      />
+    );
 
   return (
     <section
@@ -566,6 +679,15 @@ export default function GameRoom({
         </div>
         <div className="game-heading-actions">
           <button
+            className={`game-chat-toggle assist-toggle ${showChat ? "on" : ""}`}
+            aria-expanded={showChat}
+            aria-controls="game-chat"
+            onClick={() => setShowChat((value) => !value)}
+          >
+            <MessageCircle size={14} />
+            会話
+          </button>
+          <button
             className={`assist-toggle ${assist ? "on" : ""}`}
             role="switch"
             aria-checked={assist}
@@ -581,7 +703,7 @@ export default function GameRoom({
           </button>
         </div>
       </div>
-      <div className="game-layout">
+      <div className={`game-layout ${showChat ? "chat-open" : ""}`}>
         <div className="game-primary">
           <div
             ref={table}
@@ -645,6 +767,8 @@ export default function GameRoom({
               <>
                 <PlayerBar
                   player={room.players[opponent]}
+                  playerIndex={opponent}
+                  position="opponent"
                   active={room.turn === opponent && !ended}
                   koikoi={room.koikoi[opponent]}
                   dealer={room.dealer === opponent}
@@ -668,6 +792,9 @@ export default function GameRoom({
                       />
                     ),
                   )}
+                </div>
+                <div className="capture-zone capture-zone-opponent">
+                  {renderCaptured(opponent)}
                 </div>
                 <div className="table-middle">
                   <div className="deck-pile">
@@ -734,76 +861,10 @@ export default function GameRoom({
                     <button onClick={() => setSelected(null)}>取消</button>
                   )}
                 </div>
-                {showSelection && (
-                  <div
-                    className={`selection-tray ${drawnChoice ? "draw-selection" : ""}`}
-                    aria-label={
-                      drawnChoice ? "めくり札の選択" : "合わせる場札の選択"
-                    }
-                  >
-                    <div className="selected-card-summary">
-                      <Card id={activeCard} small />
-                      <div>
-                        <span className="eyebrow">
-                          {drawnChoice ? "めくった札" : "選んだ手札"}
-                        </span>
-                        <strong>{nameOf(activeCard)}</strong>
-                        <small>
-                          {Math.floor(activeCard / 4) + 1}月 ·{" "}
-                          {MONTHS[Math.floor(activeCard / 4)]}
-                        </small>
-                      </div>
-                    </div>
-                    <div className="selection-options">
-                      <>
-                        <strong className="selection-instruction">
-                          どちらの札を取りますか？
-                        </strong>
-                        <div className="target-options">
-                          {targets.map((id) => (
-                            <button
-                              className="target-option"
-                              data-target-id={id}
-                              key={id}
-                              disabled={locked}
-                              onClick={() => selectField(id)}
-                              aria-label={`${nameOf(id)}を取る`}
-                            >
-                              <img src={cardImage(id)} alt="" />
-                              <span>
-                                {nameOf(id)}
-                                <small>
-                                  {
-                                    {
-                                      bright: "光札",
-                                      animal: "たね札",
-                                      ribbon: "短冊札",
-                                      chaff: "かす札",
-                                    }[cards[id].kind]
-                                  }
-                                </small>
-                              </span>
-                              <ArrowRight size={14} />
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    </div>
-                    {!drawnChoice && (
-                      <button
-                        className="selection-cancel icon-button"
-                        aria-label="札の選択を取り消す"
-                        disabled={locked}
-                        onClick={() => setSelected(null)}
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                  </div>
-                )}
-                <div
-                  className={`your-hand ${showSelection ? "with-selection" : ""}`}
-                >
+                <div className="capture-zone capture-zone-own">
+                  {renderCaptured(own)}
+                </div>
+                <div className="your-hand">
                   {me === null ? (
                     <div className="spectator-hand">
                       {Array.from(
@@ -871,6 +932,8 @@ export default function GameRoom({
                   )}
                 <PlayerBar
                   player={room.players[own]}
+                  playerIndex={own}
+                  position="own"
                   active={room.turn === own && !ended}
                   koikoi={room.koikoi[own]}
                   dealer={room.dealer === own}
@@ -880,7 +943,7 @@ export default function GameRoom({
                   <div className="decision-shade">
                     <div className="decision-panel">
                       <span className="eyebrow">A WINNING HAND</span>
-                      <h2>役、成立。</h2>
+                      <h2>この勝負、どうする？</h2>
                       <div className="decision-yaku">
                         {room.yaku[own]?.map((y) => (
                           <span key={y.name}>
@@ -1029,145 +1092,19 @@ export default function GameRoom({
             </span>
           </div>
         </div>
-        <aside className="game-side">
-          <div className="game-side-tabs">
-            <button
-              className={panel === "yaku" ? "active" : ""}
-              onClick={() => setPanel("yaku")}
-            >
-              <Layers3 size={15} />
-              役と獲得札
-            </button>
-            <button
-              className={panel === "chat" ? "active" : ""}
-              onClick={() => setPanel("chat")}
-            >
-              <MessageCircle size={15} />
-              会話
-            </button>
-          </div>
-          {panel === "yaku" ? (
-            <div className="capture-panel">
-              {assist && me !== null && room.phase !== "waiting" && (
-                <section className="yaku-assist">
-                  <div className="assist-heading">
-                    <Sparkles size={15} />
-                    <h3>次に狙える役</h3>
-                    <span>あと何枚？</span>
-                  </div>
-                  <p className="assist-description">
-                    あなたの獲得札から、役への道しるべ。
-                  </p>
-                  {yakuCandidates.map((y) => (
-                    <div
-                      className={`yaku-candidate ${y.need - y.have === 1 ? "one-away" : ""}`}
-                      key={y.name}
-                    >
-                      <div className="candidate-heading">
-                        <strong>{y.name}</strong>
-                        <span>
-                          {y.points}
-                          <small>文</small>
-                        </span>
-                      </div>
-                      <div className="candidate-progress">
-                        <div>
-                          <span
-                            style={{
-                              width: `${Math.min(100, (y.have / y.need) * 100)}%`,
-                            }}
-                          />
-                        </div>
-                        <small>
-                          {y.have} / {y.need}
-                        </small>
-                        <b>あと{y.need - y.have}枚</b>
-                      </div>
-                      <div className="candidate-missing">
-                        {y.missing.slice(0, 6).map((id) => (
-                          <img
-                            className={
-                              room.field.includes(id) ? "in-field" : ""
-                            }
-                            src={cardImage(id)}
-                            key={id}
-                            alt={nameOf(id)}
-                            title={`${nameOf(id)}${room.field.includes(id) ? " · 場にあります" : ""}`}
-                          />
-                        ))}
-                        {y.missing.length > 6 && (
-                          <span>ほか{y.missing.length - 6}枚</span>
-                        )}
-                      </div>
-                      {y.ids.length > y.need && (
-                        <small className="candidate-note">
-                          {y.name === "雨四光"
-                            ? "柳に小野道風と、雨以外の光3枚"
-                            : `候補の中から、あと${y.need - y.have}枚`}
-                        </small>
-                      )}
-                    </div>
-                  ))}
-                  <small className="assist-footnote">
-                    金の枠は場にある札。獲得できる保証ではありません。
-                    <br />
-                    7文以上で得点2倍。相手のこいこい後ならさらに2倍。
-                  </small>
-                </section>
-              )}
-              {room.players.map((player, index) => (
-                <section key={player.id} data-capture-player={index}>
-                  <h3>
-                    <span>
-                      {player.name}
-                      {index === me && <small> · あなた</small>}
-                    </span>
-                    <small>{player.captured.length}枚</small>
-                  </h3>
-                  <div className="captured-cards">
-                    {player.captured.length ? (
-                      player.captured.map((id) => (
-                        <img
-                          key={id}
-                          src={cardImage(id)}
-                          title={nameOf(id)}
-                          alt={nameOf(id)}
-                        />
-                      ))
-                    ) : (
-                      <span>札はこれから。いい一局を。</span>
-                    )}
-                  </div>
-                  <div className="earned-yaku">
-                    {room.yaku[index]?.map((y) => (
-                      <span key={y.name}>
-                        <Check size={10} />
-                        {y.name}
-                        <b>{y.points}文</b>
-                      </span>
-                    ))}
-                  </div>
-                </section>
-              ))}
-              <div className="game-hint">
-                <Flower2 size={18} />
-                <p>
-                  手札を選ぶ → 場札に重ねる → 獲得。
-                  <br />
-                  同じ月が2枚なら1枚を選び、3枚ならまとめて取ります。
-                </p>
-              </div>
-              <div className="game-log">
-                <span className="eyebrow">TABLE JOURNAL</span>
-                {room.log
-                  .slice(-5)
-                  .reverse()
-                  .map((line, index) => (
-                    <p key={`${line}-${index}`}>{line}</p>
-                  ))}
-              </div>
+        {showChat && (
+          <aside className="game-side game-conversation" id="game-chat">
+            <div className="game-side-tabs">
+              <button
+                className="active"
+                type="button"
+                onClick={() => setShowChat(false)}
+                aria-label="会話を閉じる"
+              >
+                <MessageCircle size={15} />
+                会話
+              </button>
             </div>
-          ) : (
             <div className="chat-panel">
               <div className="chat-messages">
                 {incoming.messages.length ? (
@@ -1213,9 +1150,78 @@ export default function GameRoom({
                 </button>
               </form>
             </div>
-          )}
-        </aside>
+            <div className="table-role-guide">
+              <Flower2 size={18} />
+              <p>
+                取り札は光・たね・短冊・かすに分けて並びます。
+                <br />
+                金色は成立した役、印付きはあと1枚。取り消し線は成立できなくなった役です。
+                {assist && (
+                  <>
+                    <br />
+                    役を押すと、必要な札と理由を確認できます。
+                  </>
+                )}
+              </p>
+            </div>
+          </aside>
+        )}
       </div>
+      {assist && roleDetail && detailedRole && (
+        <section
+          className={`role-detail role-detail-${detailedRole.state}`}
+          aria-label={`${room.players[roleDetail.player]?.name}の${detailedRole.name}の詳細`}
+        >
+          <div className="role-detail-title">
+            <span>{room.players[roleDetail.player]?.name}</span>
+            <button
+              className="icon-button"
+              aria-label="役の詳細を閉じる"
+              onClick={() => setRoleDetail(null)}
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <h3>
+            {detailedRole.name}
+            <span>{detailedRole.points}文</span>
+          </h3>
+          <p>{detailedRole.reason}</p>
+          {detailedRole.missing.length > 0 && (
+            <div className="role-detail-cards">
+              {detailedRole.missing.map((id) => {
+                const blocked =
+                  room.players[1 - roleDetail.player]?.captured.includes(id);
+                return (
+                  <span
+                    key={id}
+                    className={`${blocked ? "role-card-blocked" : ""} ${room.field.includes(id) ? "role-card-in-field" : ""}`}
+                    title={`${nameOf(id)}${blocked ? " · 相手が獲得済み" : room.field.includes(id) ? " · 場にあります" : ""}`}
+                  >
+                    <img src={cardImage(id)} alt={nameOf(id)} />
+                    {blocked && <X size={13} />}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {detailedRole.missing.length > 0 && (
+            <small>金枠：場にある札　×：相手が獲得済み</small>
+          )}
+        </section>
+      )}
+      {cue &&
+        createPortal(
+          <div className="table-cutin-anchor" style={cue.position}>
+            <YakuCutIn
+              announcement={cue.announcement}
+              playerName={cue.playerName}
+              sequenceKey={cue.sequence}
+              reducedMotion={cue.reducedMotion}
+            />
+          </div>,
+          document.body,
+        )}
       {flight && createPortal(<MoveOverlay flight={flight} />, document.body)}
     </section>
   );
@@ -1229,8 +1235,8 @@ function MoveOverlay({ flight }: { flight: Flight }) {
     "--target-x": `${target.x + (event.captured ? 8 : 0)}px`,
     "--target-y": `${target.y - (event.captured ? 7 : 0)}px`,
     "--target-rotation": event.captured ? "5deg" : "0deg",
-    "--destination-x": `${destination.x + 18}px`,
-    "--destination-y": `${destination.y + 35}px`,
+    "--destination-x": `${destination.x}px`,
+    "--destination-y": `${destination.y}px`,
     "--card-width": `${target.width}px`,
     "--duration": `${duration}ms`,
   } as CSSProperties;
@@ -1241,22 +1247,29 @@ function MoveOverlay({ flight }: { flight: Flight }) {
       style={position}
     >
       {(stage === "stack" || stage === "collect") &&
-        flight.targets.map(({ id, position: origin }, index) => (
-          <div
-            key={id}
-            className="flying-card target-copy"
-            style={
-              {
-                "--origin-x": `${origin.x}px`,
-                "--origin-y": `${origin.y}px`,
-                "--stack-offset": `${index * 3}px`,
-                "--stack-rotation": `${index * -4}deg`,
-              } as CSSProperties
-            }
-          >
-            <img src={cardImage(id)} alt="" />
-          </div>
-        ))}
+        flight.targets.map(
+          (
+            { id, position: origin, destination: captureDestination },
+            index,
+          ) => (
+            <div
+              key={id}
+              className="flying-card target-copy"
+              style={
+                {
+                  "--origin-x": `${origin.x}px`,
+                  "--destination-x": `${captureDestination.x}px`,
+                  "--destination-y": `${captureDestination.y}px`,
+                  "--origin-y": `${origin.y}px`,
+                  "--stack-offset": `${index * 3}px`,
+                  "--stack-rotation": `${index * -4}deg`,
+                } as CSSProperties
+              }
+            >
+              <img src={cardImage(id)} alt="" />
+            </div>
+          ),
+        )}
       <div className="flying-card played-copy" key={`${event.id}-${stage}`}>
         <img src={cardImage(event.cardId)} alt="" />
       </div>
@@ -1283,12 +1296,16 @@ function MoveOverlay({ flight }: { flight: Flight }) {
 
 function PlayerBar({
   player,
+  playerIndex,
+  position,
   active,
   koikoi,
   dealer,
   self = false,
 }: {
   player: RoomView["players"][number] | undefined;
+  playerIndex: number;
+  position: "opponent" | "own";
   active: boolean;
   koikoi: number;
   dealer: boolean;
@@ -1296,7 +1313,10 @@ function PlayerBar({
 }) {
   if (!player) return null;
   return (
-    <div className={`player-bar ${active ? "active" : ""}`}>
+    <div
+      className={`player-bar ${position}-player ${active ? "active" : ""}`}
+      data-player-index={playerIndex}
+    >
       <span className={`player-avatar ${player.isCpu ? "cpu" : ""}`}>
         {player.isCpu ? <Cpu size={18} /> : player.name.slice(0, 1)}
       </span>

@@ -1,0 +1,268 @@
+.yaku-cut-in {
+  --yaku-accent: #f9d878;
+  --yaku-glow: #d9a748;
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+  isolation: isolate;
+  animation: yaku-cutin-life var(--cutin-duration) ease both;
+}
+.yaku-cut-in-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.yaku-cut-in-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at center, #06130eda, #06130e50 75%, transparent);
+}
+.yaku-cut-in-aura {
+  position: absolute;
+  width: min(95%, 600px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  opacity: 0.4;
+  background: repeating-conic-gradient(from 15deg, transparent 0deg 14deg, var(--yaku-glow) 16deg 18deg, transparent 20deg 30deg);
+  -webkit-mask-image: radial-gradient(circle, transparent 19%, #000 45%, transparent 70%);
+  mask-image: radial-gradient(circle, transparent 19%, #000 45%, transparent 70%);
+  animation: yaku-aura 2.5s linear both;
+}
+.yaku-cut-in-ribbon {
+  position: absolute;
+  left: -15%;
+  width: 130%;
+  height: 165px;
+  transform: rotate(-8deg);
+  background: linear-gradient(90deg, transparent, #7e5c2260 25%, #b9894280 50%, #7e5c2260 75%, transparent);
+  border-block: 1px solid #f5d09166;
+  box-shadow: 0 0 40px #d9a74828;
+  animation: yaku-ribbon-entry 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.yaku-cut-in-orbit {
+  position: absolute;
+  width: min(72%, 400px);
+  aspect-ratio: 1;
+  border: 1px solid var(--yaku-accent);
+  box-shadow: 0 0 0 8px #fff0, 0 0 0 9px #f5d09125, 0 0 55px #f5d09130;
+  border-radius: 50%;
+  opacity: 0.22;
+  animation: yaku-orbit-entry 600ms ease-out both;
+}
+.yaku-cut-in-content {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 16px;
+  color: #fff6db;
+  text-align: center;
+}
+.yaku-cut-in-player {
+  max-width: 75%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 5px 14px;
+  border: 1px solid #e9d29c66;
+  background: #101d13cc;
+  border-radius: 999px;
+}
+.yaku-cut-in-title {
+  margin: 12px 0 7px;
+  font-family: "Noto Serif JP", serif;
+  font-weight: 900;
+  font-size: clamp(35px, 5.2vw, 72px);
+  line-height: 1.35;
+  letter-spacing: 0.07em;
+  color: var(--yaku-accent);
+  text-shadow: 0 2px 0 #24100b, 0 5px 10px #000, 0 0 26px var(--yaku-glow);
+  animation: yaku-title-entry 410ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.yaku-cut-in-cards {
+  --card-width: 83px;
+  width: min(87%, 440px);
+  height: 142px;
+  position: relative;
+  margin: 10px 0 3px;
+  perspective: 600px;
+}
+.yaku-cut-in-card {
+  position: absolute;
+  left: calc(50% + (var(--card-index) - (var(--card-count) - 1) / 2) * min(92px, (100% - var(--card-width)) / max(1, var(--card-count) - 1)));
+  top: 4px;
+  width: var(--card-width);
+  height: auto;
+  border: 2px solid #fff2c6;
+  border-radius: 3px;
+  box-shadow: 0 7px 15px #000b, 0 0 18px #f8d68422;
+  transform: translateX(-50%) rotate(var(--card-angle));
+  transform-origin: center 85%;
+  animation: yaku-card-entry 450ms cubic-bezier(0.15, 0.9, 0.23, 1.16) both;
+  animation-delay: calc(90ms + var(--card-index) * 32ms);
+}
+.yaku-cut-in-points {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+  text-shadow: 0 3px 10px #000;
+  color: #fff6db;
+  animation: yaku-points-entry 420ms 250ms both;
+}
+.yaku-cut-in-points b {
+  font-family: "Noto Serif JP", serif;
+  font-size: 42px;
+  line-height: 1.2;
+}
+.yaku-cut-in-points span { font-size: 16px; }
+.yaku-cut-in-particles { position: absolute; inset: 0; }
+.yaku-cut-in-particles i {
+  position: absolute;
+  left: var(--particle-x);
+  top: var(--particle-y);
+  width: 4px;
+  height: 18px;
+  border-radius: 60%;
+  background: var(--yaku-accent);
+  box-shadow: 0 0 14px var(--yaku-glow);
+  transform: rotate(var(--particle-turn));
+  animation: yaku-particle-flight 1500ms ease-out both;
+  animation-delay: calc(var(--particle-index) * 18ms);
+}
+.yaku-cut-in-moon { display: none; }
+.yaku-theme-flowers { --yaku-accent: #ffd0db; --yaku-glow: #f185a9; }
+.yaku-theme-flowers .yaku-cut-in-particles i {
+  width: 17px;
+  height: 25px;
+  border-radius: 95% 10% 85% 15%;
+  background: linear-gradient(130deg, #fff0f2, #ef86aa);
+}
+.yaku-theme-moon { --yaku-accent: #fff2b3; --yaku-glow: #ebcb83; }
+.yaku-theme-moon .yaku-cut-in-moon {
+  display: block;
+  position: absolute;
+  width: 180px;
+  aspect-ratio: 1;
+  right: 8%;
+  top: 12%;
+  border-radius: 50%;
+  opacity: 0.42;
+  background: radial-gradient(circle at 40% 35%, #fffacb, #c9b475);
+  box-shadow: 0 0 70px #e9d9a74d;
+}
+.yaku-theme-red { --yaku-accent: #ffc1b5; --yaku-glow: #ed4c51; }
+.yaku-theme-red .yaku-cut-in-ribbon {
+  background: linear-gradient(90deg, transparent, #a3142ddb 28%, #de3542de 50%, #a3142ddb 72%, transparent);
+}
+.yaku-theme-blue { --yaku-accent: #c3d9ff; --yaku-glow: #8787ff; }
+.yaku-theme-blue .yaku-cut-in-ribbon {
+  background: linear-gradient(90deg, transparent, #37377fd9 28%, #6554bce8 50%, #37377fd9 72%, transparent);
+}
+.yaku-theme-nature { --yaku-accent: #e2efa1; --yaku-glow: #82a95a; }
+.yaku-theme-ribbon { --yaku-accent: #e5ccff; --yaku-glow: #a480c2; }
+.yaku-theme-rain { --yaku-accent: #ccedff; --yaku-glow: #8ac1d6; }
+.yaku-theme-rain .yaku-cut-in-particles i {
+  height: 40px;
+  width: 1px;
+  transform: rotate(15deg);
+}
+.yaku-cut-in.is-increment {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 20px 12px;
+  animation: yaku-increment-life var(--cutin-duration) ease both;
+}
+.yaku-increment-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 8px 14px;
+  border: 1px solid #dec98480;
+  border-radius: 8px;
+  color: #ffedb7;
+  background: #17281ef5;
+  box-shadow: 0 6px 22px #0006;
+}
+.yaku-increment-badge .yaku-cut-in-player {
+  max-width: 95px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 9px;
+  letter-spacing: 0;
+  color: #acbaa5;
+}
+.yaku-increment-name { font-size: 13px; white-space: nowrap; }
+.yaku-increment-value { font-size: 22px; white-space: nowrap; }
+@keyframes yaku-cutin-life {
+  0% { opacity: 0; }
+  10%, 84% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes yaku-title-entry {
+  from { opacity: 0; transform: translateY(12px) scale(1.35); filter: blur(5px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes yaku-card-entry {
+  from { opacity: 0; transform: translateX(-50%) translateY(55px) rotateY(80deg) rotate(var(--card-angle)) scale(0.6); }
+  to { opacity: 1; transform: translateX(-50%) rotateY(0deg) rotate(var(--card-angle)) scale(1); }
+}
+@keyframes yaku-ribbon-entry {
+  from { opacity: 0; transform: translateX(-70%) rotate(-8deg); }
+  to { opacity: 1; transform: translateX(0) rotate(-8deg); }
+}
+@keyframes yaku-orbit-entry {
+  from { opacity: 0; transform: scale(0.45); }
+  to { opacity: 0.22; transform: scale(1); }
+}
+@keyframes yaku-aura {
+  from { transform: rotate(-20deg) scale(0.8); }
+  to { transform: rotate(30deg) scale(1.1); }
+}
+@keyframes yaku-points-entry {
+  from { opacity: 0; transform: scale(1.7); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes yaku-particle-flight {
+  from { opacity: 0; translate: 0 -50px; rotate: -30deg; }
+  15% { opacity: 0.8; }
+  to { opacity: 0; translate: 20px 95px; rotate: 110deg; }
+}
+@keyframes yaku-increment-life {
+  0% { opacity: 0; transform: translateY(5px); }
+  20%, 75% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-8px); }
+}
+@media (max-width: 600px) {
+  .yaku-cut-in-title { font-size: clamp(30px, 9vw, 48px); }
+  .yaku-cut-in-cards { --card-width: 65px; height: 110px; }
+  .yaku-cut-in-points b { font-size: 34px; }
+  .yaku-cut-in-content { padding-inline: 8px; }
+  .yaku-cut-in-player { font-size: 10px; }
+  .yaku-cut-in-moon { width: 130px; }
+}
+.yaku-cut-in.is-reduced,
+.yaku-cut-in.is-reduced * { animation: none !important; }
+.yaku-cut-in.is-reduced .yaku-cut-in-particles { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .yaku-cut-in, .yaku-cut-in * { animation: none !important; }
+  .yaku-cut-in-particles { display: none; }
+}

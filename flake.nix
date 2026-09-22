@@ -51,6 +51,7 @@
                 );
             };
             nodejs = pkgs.nodejs_22;
+            nativeBuildInputs = [ pkgs.tsx ];
             # Every archive is fetched using its package-lock.json integrity.
             # No manually maintained aggregate dependency hash is necessary.
             npmDeps = pkgs.importNpmLock {
@@ -59,6 +60,12 @@
             };
             npmConfigHook = pkgs.importNpmLock.npmConfigHook;
             npmBuildScript = "build";
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              npm test
+              runHook postCheck
+            '';
             installPhase = ''
               runHook preInstall
               mkdir -p "$out"
@@ -111,6 +118,7 @@
               rustfmt
               clippy
               nodejs_22
+              tsx
               pkg-config
             ];
             shellHook = ''

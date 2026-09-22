@@ -1,0 +1,222 @@
+.captured-yaku {
+  --pile-card-width: 43px;
+  --pile-card-height: 69px;
+  --pile-card-overlap: -24px;
+  --pile-accent: #d2bb82;
+  width: 100%;
+  min-width: 0;
+  margin: 5px 0 8px;
+  color: #d3d7c7;
+}
+.captured-yaku-owner {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 4px;
+  color: #a4b29a;
+  font-size: 9px;
+  line-height: 1.4;
+}
+.captured-yaku-owner > :first-child {
+  flex-shrink: 0;
+  color: #cfba87;
+  letter-spacing: 0.08em;
+}
+.captured-yaku-owner > :last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.captured-yaku-groups {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+.captured-yaku-group {
+  min-width: 0;
+  padding: 4px 5px 5px;
+  border: 1px solid #c9bf8224;
+  border-radius: 5px;
+  background: linear-gradient(180deg, #172c2094, #11201648);
+}
+.captured-yaku-self .captured-yaku-group {
+  border-color: #d2bc7d38;
+  background: linear-gradient(180deg, #263728a3, #14291c61);
+}
+.captured-yaku-group h3 {
+  color: #a4af98;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: center;
+  letter-spacing: 0.12em;
+}
+.captured-yaku-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: calc(var(--pile-card-height) + 9px);
+  margin: 1px -2px 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #aa986352 transparent;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.captured-yaku-scroll::-webkit-scrollbar {
+  height: 3px;
+}
+.captured-yaku-scroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: #aa986352;
+}
+.captured-yaku-fan {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: max-content;
+  min-width: 100%;
+  padding: 6px 3px 2px;
+}
+.captured-yaku-card {
+  position: relative;
+  display: block;
+  flex: 0 0 var(--pile-card-width);
+  width: var(--pile-card-width);
+  height: var(--pile-card-height);
+  border-radius: 2px;
+  box-shadow: -2px 2px 4px #06110880;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.captured-yaku-card + .captured-yaku-card {
+  margin-left: var(--pile-card-overlap);
+}
+.captured-yaku-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: contain;
+}
+.captured-yaku-card:hover,
+.captured-yaku-card:focus-visible {
+  z-index: 2;
+  transform: translateY(-4px);
+  outline: 1px solid #efcf86;
+  outline-offset: 1px;
+  box-shadow: 0 2px 7px #000a;
+}
+.captured-yaku-empty {
+  display: grid;
+  place-items: center;
+}
+.captured-yaku-vacant {
+  width: calc(var(--pile-card-width) - 5px);
+  height: calc(var(--pile-card-height) - 7px);
+  border: 1px dashed #a8b38b24;
+  border-radius: 2px;
+  background: #15261a30;
+}
+.captured-yaku-roles {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+}
+.captured-yaku-role {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 15px;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: #d1d8c7;
+  font-family: var(--serif);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.captured-yaku-role:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.captured-yaku-role:hover:not(:disabled),
+.captured-yaku-role.is-selected {
+  background: #d8c48913;
+  border-color: #d8c48950;
+}
+.captured-yaku-role.is-impossible,
+.captured-yaku-role.is-upgraded {
+  color: #798574;
+}
+.captured-yaku-role.is-impossible .captured-yaku-role-name,
+.captured-yaku-role.is-upgraded .captured-yaku-role-name {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: #92a185b3;
+}
+.captured-yaku-role.is-near {
+  color: #9fe1cf;
+  text-shadow: 0 0 10px #84d7b74f;
+}
+.captured-yaku-role.is-complete {
+  color: #ffe1a0;
+  text-shadow: 0 0 10px #e9b44070;
+  background: #bda35412;
+}
+.captured-yaku-role-mark {
+  font-family: sans-serif;
+  font-size: 7px;
+  line-height: 1;
+}
+.captured-yaku-role.is-complete .captured-yaku-role-mark {
+  font-size: 10px;
+}
+@media (max-width: 600px) {
+  .captured-yaku {
+    --pile-card-width: 29px;
+    --pile-card-height: 46px;
+    --pile-card-overlap: -15px;
+    margin: 5px 0;
+  }
+  .captured-yaku-owner {
+    margin-bottom: 2px;
+    font-size: 9px;
+    line-height: 1.1;
+  }
+  .captured-yaku-groups {
+    gap: 4px;
+  }
+  .captured-yaku-group {
+    padding: 3px;
+  }
+  .captured-yaku-group h3 {
+    font-size: 9px;
+  }
+  .captured-yaku-scroll {
+    margin-bottom: 2px;
+  }
+  .captured-yaku-role {
+    min-height: 13px;
+    gap: 1px;
+    padding: 0;
+    font-size: 11px;
+    line-height: 13px;
+    letter-spacing: -0.04em;
+  }
+  .captured-yaku-role-mark {
+    font-size: 5px;
+  }
+  .captured-yaku-role.is-complete .captured-yaku-role-mark {
+    font-size: 8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .captured-yaku-card {
+    transition: none;
+  }
+}

@@ -56,10 +56,13 @@ Nix が使える環境では、同梱のスクリプトで Cloudflare Quick Tunn
 ```sh
 ./scripts/share.sh start
 ./scripts/share.sh status
+./scripts/share.sh refresh-ui
 ./scripts/share.sh stop
 ```
 
-`start` は同じ flake の実行パッケージと cloudflared を Nix で準備し、専用サーバーを `127.0.0.1:3100` に起動します。表示された URL を他のプレイヤーに共有してください。公開プロセスはバックグラウンドで動くため、終了するときは `stop` を実行します。開発用の Vite とポート 3000 のサーバーは停止しません。
+`start` は同じ flake の実行パッケージと cloudflared を Nix で準備し、専用サーバーを `127.0.0.1:3100` に起動します。表示された URL を他のプレイヤーに共有してください。起動したターミナルを開いたままにし、終了するときは `Ctrl+C` または別のターミナルから `stop` を実行します。開発用の Vite とポート 3000 のサーバーは停止しません。
+
+`refresh-ui` は新しいパッケージをビルドし、配信する Web クライアントだけを更新します。公開 URL・部屋・進行中の対戦は維持されます。利用者はブラウザを再読み込みすると更新後の画面を使えます。Rust サーバー自体を更新する場合は `stop` の後に `start` が必要で、その際はメモリ上の対戦データが消えます。
 
 ポートを変更する場合は `HANAFUDA_SHARE_PORT=3200 ./scripts/share.sh start` のように指定します。URL・ログ・プロセス情報は `artifacts/share` に保存します。PC のスリープやネットワーク切断で公開できなくなる場合があり、作り直すと URL が変わります。継続して公開する場合は、上記の固定ドメインとリバースプロキシの構成を使用してください。
 
