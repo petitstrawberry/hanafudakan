@@ -1,4 +1,4 @@
-export type SoundKind = 'click' | 'deal' | 'capture' | 'win' | 'koikoi';
+export type SoundKind = 'click' | 'deal' | 'capture' | 'win' | 'koikoi' | 'hyper';
 
 let context: AudioContext | undefined;
 let muted = false;
@@ -112,6 +112,15 @@ export function playSound(kind: SoundKind): void {
       drum(audio, at + 0.28, 0.32);
       [293.66, 349.23, 440, 587.33, 698.46, 880, 1174.66].forEach((f, i) => pluck(audio, f, at + i * 0.105, 0.2));
       [587.33, 880, 1174.66].forEach((f) => tone(audio, f, at + 0.8, 1.9, 0.08));
+      break;
+    case 'hyper':
+      drum(audio, at, 0.55);
+      drum(audio, at + 0.18, 0.38);
+      [196, 246.94, 329.63, 493.88, 659.25, 987.77, 1318.51].forEach((f, i) => {
+        pluck(audio, f, at + i * 0.055, 0.2);
+        tone(audio, f * 2, at + i * 0.055, 0.24, 0.03, 'sawtooth');
+      });
+      tone(audio, 1568, at + 0.45, 1.2, 0.12, 'triangle');
       break;
   }
 }

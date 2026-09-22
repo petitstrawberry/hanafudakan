@@ -31,7 +31,7 @@ use tower_http::{
 };
 use uuid::Uuid;
 
-use crate::game::{Game, Phase, PublicGameEvent, Yaku};
+use crate::game::{Game, HyperState, Phase, PublicGameEvent, Yaku};
 
 const SESSION_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const ROOM_TTL: Duration = Duration::from_secs(6 * 60 * 60);
@@ -116,6 +116,7 @@ struct Room {
     host_id: String,
     password: Option<String>,
     mode: Mode,
+    hyper_enabled: bool,
     rounds: u8,
     players: Vec<Player>,
     spectators: HashSet<String>,
@@ -132,6 +133,7 @@ struct Room {
 enum Mode {
     Pvp,
     Cpu,
+    Hyper,
 }
 #[derive(Clone, Serialize)]
 struct ChatMessage {
@@ -158,6 +160,7 @@ struct RoomSummary {
     name: String,
     locked: bool,
     mode: Mode,
+    hyper_enabled: bool,
     rounds: u8,
     players: usize,
     spectators: usize,
@@ -171,6 +174,7 @@ struct RoomView {
     name: String,
     host_id: String,
     mode: Mode,
+    hyper_enabled: bool,
     rounds: u8,
     round: u8,
     status: &'static str,
@@ -192,11 +196,16 @@ struct RoomView {
     log: Vec<String>,
     legal_targets: Vec<u8>,
     events: Vec<PublicGameEvent>,
+    hyper: Option<HyperState>,
     spectators: usize,
 }
 impl Room {
     fn start_game(&mut self) {
-        let mut game = Game::new(self.rounds);
+        let mut game = if self.hyper_enabled || self.mode == Mode::Hyper {
+            Game::new_hyper(self.rounds)
+        } else {
+            Game::new(self.rounds)
+        };
         game.set_event_sequence(self.event_sequence);
         self.game = Some(game);
     }
@@ -220,6 +229,7 @@ impl Room {
             name: self.name.clone(),
             locked: self.password.is_some(),
             mode: self.mode,
+            hyper_enabled: self.hyper_enabled,
             rounds: self.rounds,
             players: self
                 .players
@@ -261,6 +271,7 @@ impl Room {
             name: self.name.clone(),
             host_id: self.host_id.clone(),
             mode: self.mode,
+            hyper_enabled: self.hyper_enabled,
             rounds: self.rounds,
             round: game.map_or(0, |g| g.round),
             status: self.status(),
@@ -291,6 +302,7 @@ impl Room {
             log: game.map_or_else(Vec::new, |g| g.log.clone()),
             legal_targets: game.map_or_else(Vec::new, Game::legal_targets),
             events: game.map_or_else(Vec::new, |g| g.events.clone()),
+            hyper: game.and_then(|g| g.hyper_state(mine)),
             spectators: self.spectators.len(),
         }
     }
@@ -553,6 +565,8 @@ struct RoomRequest {
     password: Option<String>,
     rounds: u8,
     mode: Mode,
+    #[serde(default)]
+    hyper: bool,
 }
 async fn hash_password(state: &AppState, password: String) -> Result<String, ApiError> {
     let permit = state
@@ -630,10 +644,14 @@ async fn create_room(
         name: session.name.clone(),
         is_cpu: false,
     }];
-    if body.mode == Mode::Cpu {
+    if matches!(body.mode, Mode::Cpu | Mode::Hyper) {
         players.push(Player {
             id: format!("cpu-{id}"),
-            name: "花影 AI".into(),
+            name: if body.mode == Mode::Hyper {
+                "花影 Hyper AI".into()
+            } else {
+                "花影 AI".into()
+            },
             is_cpu: true,
         });
     }
@@ -643,6 +661,7 @@ async fn create_room(
         host_id: session.player_id,
         password,
         mode: body.mode,
+        hyper_enabled: body.hyper || body.mode == Mode::Hyper,
         rounds: body.rounds,
         players,
         spectators: HashSet::new(),
@@ -814,6 +833,9 @@ enum Command {
     Decision {
         koikoi: bool,
     },
+    Hyper {
+        role: String,
+    },
     Chat {
         text: String,
     },
@@ -938,6 +960,12 @@ fn apply_command(room: &mut Room, session: &Session, command: Command) -> Result
                         .as_mut()
                         .ok_or("対局が始まっていません")?
                         .decision(index, koikoi)?;
+                }
+                Command::Hyper { role } => {
+                    room.game
+                        .as_mut()
+                        .ok_or("対局が始まっていません")?
+                        .hyper(index, role)?;
                 }
                 _ => unreachable!("message and leave handled above"),
             }

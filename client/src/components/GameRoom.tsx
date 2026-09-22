@@ -63,6 +63,12 @@ type Flight = {
   stage: "reveal" | "travel" | "stack" | "settle" | "collect";
   duration: number;
 };
+type HyperCutIn = {
+  name: string;
+  source: string;
+  description: string;
+  sequence: number;
+};
 const nameOf = (id: number) => cards[id]?.name || "花札";
 const sameMonth = (left: number, right: number) =>
   Math.floor(left / 4) === Math.floor(right / 4);
@@ -85,6 +91,11 @@ const signature = (room: RoomView) =>
     room.deckCount,
     room.players.map((p) => [p.handCount, p.captured, p.score]),
     room.koikoi,
+    room.hyper?.contracts,
+    room.hyper?.stake,
+    room.hyper?.bloom,
+    room.hyper?.chain,
+    room.hyper?.options,
   ]);
 const sleep = (duration: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, duration));
@@ -207,6 +218,7 @@ export default function GameRoom({
   );
   const [announcement, setAnnouncement] = useState("");
   const [celebration, setCelebration] = useState("");
+  const [hyperCutIn, setHyperCutIn] = useState<HyperCutIn | null>(null);
   const [cue, setCue] = useState<Cue | null>(null);
   const cueSequence = useRef(0);
   const announcedRoles = useRef(
@@ -230,6 +242,8 @@ export default function GameRoom({
   const own = me ?? 0;
   const opponent = own === 0 ? 1 : 0;
   const myTurn = me !== null && room.turn === me;
+  const hyperMode = room.hyperEnabled || room.mode === "hyper";
+  const hyperState = room.hyper;
   const playing = room.phase === "play";
   const drawnChoice = room.phase === "draw_choice";
   const deciding = room.phase === "decision";
@@ -310,6 +324,11 @@ export default function GameRoom({
     const timer = window.setTimeout(() => setCelebration(""), 1900);
     return () => window.clearTimeout(timer);
   }, [celebration]);
+  useEffect(() => {
+    if (!hyperCutIn) return;
+    const timer = window.setTimeout(() => setHyperCutIn(null), motionEnabled() ? 4600 : 1800);
+    return () => window.clearTimeout(timer);
+  }, [hyperCutIn]);
 
   useEffect(() => {
     if (!connected) {
@@ -319,6 +338,7 @@ export default function GameRoom({
       setCue(null);
       setFlight(null);
       setLandingCard(null);
+      setHyperCutIn(null);
     }
   }, [connected]);
 
@@ -579,6 +599,19 @@ export default function GameRoom({
           const calledKoikoi = nextRoom.koikoi.some(
             (count, index) => count > (previous.koikoi[index] || 0),
           );
+          const calledHyper =
+            nextRoom.hyper?.contracts.some(
+              (contracts, index) =>
+                contracts.length > (previous.hyper?.contracts[index]?.length || 0),
+            ) || false;
+          const hyperContract = calledHyper
+            ? nextRoom.hyper?.contracts
+                .flatMap((contracts, player) =>
+                  contracts
+                    .slice(previous.hyper?.contracts[player]?.length || 0)
+                    .map((contract) => ({ contract, player })),
+                )[0]?.contract
+            : undefined;
           updateView(nextRoom);
           setFlight(null);
           setSelected(null);
@@ -590,6 +623,19 @@ export default function GameRoom({
             setCelebration("こいこい！");
             playSound("koikoi");
             await sleep(motionEnabled() ? 650 : 150);
+          }
+          if (calledHyper && announce) {
+            setCelebration(hyperContract ? `契約 · ${hyperContract.name}` : "HYPER CONTRACT");
+            if (hyperContract) {
+              setHyperCutIn({
+                name: hyperContract.name,
+                source: hyperContract.source,
+                description: hyperContract.description,
+                sequence: ++cueSequence.current,
+              });
+            }
+            playSound("hyper");
+            await sleep(motionEnabled() ? 820 : 180);
           }
           for (const item of cues) {
             if (!alive.current) return;
@@ -652,6 +698,7 @@ export default function GameRoom({
           setCue(null);
           setFlight(null);
           setLandingCard(null);
+          setHyperCutIn(null);
           setAnnouncement("");
         }
       }
@@ -718,8 +765,26 @@ export default function GameRoom({
     }
   };
   const points = (room.yaku[own] || []).reduce((sum, y) => sum + y.points, 0);
-  const multiplier =
-    (points >= 7 ? 2 : 1) * (room.koikoi[opponent] > 0 ? 2 : 1);
+  const hyperContracts = hyperState?.contracts[own]?.length || 0;
+  const hyperMultiplier = hyperMode
+    ? hyperContracts >= 3
+      ? 5
+      : hyperContracts === 2
+        ? 3
+        : hyperContracts === 1
+          ? 1.8
+          : 1
+    : 1;
+  const multiplier = hyperMode
+    ? hyperMultiplier
+    : (points >= 7 ? 2 : 1) * (room.koikoi[opponent] > 0 ? 2 : 1);
+  const hyperProjected = hyperMode
+    ? Math.ceil(
+        (points + (hyperState?.stake[own] || 0) + (hyperState?.bloom[own] || 0)) *
+          hyperMultiplier *
+          (1 + 0.25 * Math.min(4, Math.max(0, (hyperState?.chain[own] || 0) - 2))),
+      )
+    : points * multiplier;
   const exhausted = room.players.every((player) => player.handCount === 0);
 
   const renderCaptured = (index: number) =>
@@ -759,7 +824,11 @@ export default function GameRoom({
         <div>
           <h1>{room.name}</h1>
           <span>
-            {room.mode === "cpu" ? "CPU 対戦" : "オンライン対戦"} · 第{" "}
+            {hyperMode
+              ? `ハイパー花札 · ${room.mode === "cpu" || room.mode === "hyper" ? "花影 Hyper AI" : "対人"}`
+              : room.mode === "cpu"
+                ? "CPU 対戦"
+                : "オンライン対戦"} · 第{" "}
             {room.round || 1} 局 / {room.rounds} 回戦
           </span>
         </div>
@@ -793,12 +862,22 @@ export default function GameRoom({
         <div className="game-primary">
           <div
             ref={table}
-            className={`game-table ${animating ? "table-in-motion" : ""}`}
+            className={`game-table ${animating ? "table-in-motion" : ""} ${hyperMode ? "hyper-table" : ""}`}
           >
             <div className="table-corner corner-one" />
             <div className="table-corner corner-two" />
             <div className="table-corner corner-three" />
             <div className="table-corner corner-four" />
+            {hyperMode && (
+              <>
+                <div className="hyper-stage-lights" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </div>
+                <HyperStageCards />
+              </>
+            )}
             {room.phase === "waiting" ? (
               <div className="waiting-table">
                 <span className="flower-mark">
@@ -851,6 +930,14 @@ export default function GameRoom({
               </div>
             ) : (
               <>
+                {hyperMode && hyperState && (
+                  <HyperHud
+                    state={hyperState}
+                    own={own}
+                    opponent={opponent}
+                    active={myTurn && !ended}
+                  />
+                )}
                 <PlayerBar
                   player={room.players[opponent]}
                   playerIndex={opponent}
@@ -1072,7 +1159,7 @@ export default function GameRoom({
                       </div>
                       <div className="decision-points">
                         <strong>
-                          {points * multiplier}
+                          {hyperMode ? hyperProjected : points * multiplier}
                           <small>文</small>
                         </strong>
                         <span>
@@ -1082,7 +1169,9 @@ export default function GameRoom({
                       <p>
                         {exhausted
                           ? "最後の手札です。あがって得点を確定しましょう。"
-                          : "ここであがる。それとも、もう一役。"}
+                          : hyperMode
+                            ? "役を契約へ変えると、札を戻して能力が残ります。"
+                            : "ここであがる。それとも、もう一役。"}
                       </p>
                       <div>
                         <button
@@ -1106,6 +1195,27 @@ export default function GameRoom({
                           <Sparkles size={16} />
                         </button>
                       </div>
+                      {hyperMode && hyperState?.options.length ? (
+                        <div className="hyper-contract-options" aria-label="Hyper契約候補">
+                          <span className="eyebrow">HYPER CONTRACT · 役を能力へ</span>
+                          <div>
+                            {hyperState.options.map((option) => (
+                              <button
+                                key={option.contract.id}
+                                className="hyper-contract-option"
+                                disabled={locked}
+                                onClick={() =>
+                                  submit({ type: "hyper", role: option.role })
+                                }
+                              >
+                                <strong>{option.contract.name}</strong>
+                                <span>{option.role} · {option.points}文</span>
+                                <small>{option.contract.description}</small>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 )}
@@ -1340,6 +1450,11 @@ export default function GameRoom({
           </div>,
           document.body,
         )}
+      {hyperCutIn &&
+        createPortal(
+          <HyperContractCutIn cutIn={hyperCutIn} />,
+          document.body,
+        )}
       {flight && createPortal(<MoveOverlay flight={flight} />, document.body)}
     </section>
   );
@@ -1409,6 +1524,92 @@ function MoveOverlay({ flight }: { flight: Flight }) {
           めくり
         </div>
       )}
+    </div>
+  );
+}
+
+function HyperContractCutIn({ cutIn }: { cutIn: HyperCutIn }) {
+  return (
+    <div className="hyper-contract-cutin" aria-live="assertive">
+      <div className="hyper-contract-cutin-rays" aria-hidden="true" />
+      <div className="hyper-contract-cutin-copy">
+        <span>HYPER CONTRACT · {cutIn.source}</span>
+        <strong>{cutIn.name}</strong>
+        <small>{cutIn.description}</small>
+      </div>
+      <div className="hyper-contract-cutin-seal" aria-hidden="true">契</div>
+    </div>
+  );
+}
+
+function HyperStageCards() {
+  const cardsOnStage = [8, 20, 28, 36, 44, 12];
+  return (
+    <div className="hyper-stage-cards" aria-hidden="true">
+      {cardsOnStage.map((id, index) => (
+        <div className={`hyper-stage-card hyper-stage-card-${index + 1}`} key={id}>
+          <Card id={id} />
+          <span>{index % 2 ? "連" : "契"}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HyperHud({
+  state,
+  own,
+  opponent,
+  active,
+}: {
+  state: NonNullable<RoomView["hyper"]>;
+  own: number;
+  opponent: number;
+  active: boolean;
+}) {
+  const renderContracts = (index: number) => (
+    <div className={`hyper-contracts ${index === own ? "own" : "opponent"}`}>
+      <span className="hyper-contract-label">{index === own ? "あなたの契約" : "相手の契約"}</span>
+      <div>
+        {state.contracts[index]?.length ? (
+          state.contracts[index].map((contract) => (
+            <span className="hyper-contract-chip" key={contract.id} title={contract.description}>
+              <b>{contract.name}</b>
+              <small>{contract.source}</small>
+            </span>
+          ))
+        ) : (
+          <span className="hyper-contract-empty">未契約</span>
+        )}
+      </div>
+    </div>
+  );
+  return (
+    <div className={`hyper-hud ${active ? "is-active" : ""}`}>
+      <div className="hyper-hud-title">
+        <span className="hyper-pulse" />
+        <strong>HYPER 花札</strong>
+        <small>役を契約に変換して、連鎖を伸ばす</small>
+        <em>{active ? "ACTIVE" : "SYNCED"}</em>
+      </div>
+      <div className="hyper-hud-main">
+        <div className="hyper-hud-side hyper-hud-side-opponent">
+          {renderContracts(opponent)}
+        </div>
+        <div className="hyper-hud-center">
+          <div className="hyper-hud-metrics">
+            <span>賭け点 <b>{state.stake[own] || 0}</b></span>
+            <span>花力 <b>{state.bloom[own] || 0}</b></span>
+          </div>
+          <div className="hyper-hud-chain-readout">
+            <small>CHAIN</small>
+            <strong>x{Math.max(1, state.chain[own] || 0)}</strong>
+          </div>
+        </div>
+        <div className="hyper-hud-side hyper-hud-side-own">
+          {renderContracts(own)}
+        </div>
+      </div>
     </div>
   );
 }

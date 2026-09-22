@@ -83,6 +83,7 @@
     grid-template-columns: minmax(136px, 0.9fr) minmax(280px, 2.6fr) minmax(136px, 0.9fr);
     grid-template-areas:
       "opponent-player opponent-hand own-player"
+      "rival hyper self"
       "rival field self"
       "rival turn self"
       "rival selection self"
@@ -96,6 +97,7 @@
   .enhanced-game .opponent-player { grid-area: opponent-player; }
   .enhanced-game .own-player { grid-area: own-player; }
   .enhanced-game .opponent-hand { grid-area: opponent-hand; }
+  .enhanced-game .hyper-hud { grid-area: hyper; }
   .enhanced-game .table-middle { grid-area: field; }
   .enhanced-game .turn-banner { grid-area: turn; }
   .enhanced-game .selection-tray { grid-area: selection; }

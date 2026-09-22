@@ -273,6 +273,7 @@ export default function App() {
     mode: Mode,
     rounds: number,
     password = "",
+    hyper = false,
   ) => {
     setBusy(true);
     try {
@@ -280,7 +281,7 @@ export default function App() {
       const result = await api<{ roomId: string }>("/rooms", {
         method: "POST",
         token: s.token,
-        body: { name, mode, rounds, password },
+        body: { name, mode, rounds, password, hyper },
       });
       openRoom(result.roomId);
       playSound("deal");
@@ -411,7 +412,8 @@ export default function App() {
     <div className="app-shell">
       <Scene
         active={motion}
-        intensity={roomId ? 0.5 : 1}
+        cardSkin={cardSkin}
+        intensity={room?.hyperEnabled ? 1.8 : roomId ? 0.5 : 1}
         onReady={setBackend}
       />
       <aside className="sidebar">
@@ -746,7 +748,9 @@ export default function App() {
                             <span
                               className={`room-emblem ${r.locked ? "locked" : ""}`}
                             >
-                              {r.mode === "cpu" ? (
+                              {r.hyperEnabled ? (
+                                <Sparkles size={23} />
+                              ) : r.mode === "cpu" ? (
                                 <Cpu size={23} />
                               ) : r.locked ? (
                                 <LockKeyhole size={22} />
@@ -762,7 +766,11 @@ export default function App() {
                               <p>
                                 {r.hostName}
                                 <span>·</span> {r.rounds}回戦 <span>·</span>{" "}
-                                {r.mode === "cpu" ? "CPU対戦" : "こいこい"}
+                                {r.hyperEnabled
+                                  ? `ハイパー花札 · ${r.mode === "cpu" ? "CPU" : "対人"}`
+                                  : r.mode === "cpu"
+                                    ? "CPU対戦"
+                                    : "こいこい"}
                               </p>
                             </div>
                             <div className="room-status">
@@ -1038,9 +1046,11 @@ function CreateForm({
     mode: Mode,
     rounds: number,
     password: string,
+    hyper: boolean,
   ) => Promise<void>;
 }) {
   const [mode, setMode] = useState<Mode>("pvp");
+  const [hyper, setHyper] = useState(false);
   const [locked, setLocked] = useState(false);
   return (
     <form
@@ -1052,6 +1062,7 @@ function CreateForm({
           mode,
           Number(d.get("rounds")),
           locked ? String(d.get("password")) : "",
+          hyper,
         );
       }}
     >
@@ -1076,6 +1087,19 @@ function CreateForm({
           <small>ひとりで気軽に練習</small>
         </button>
       </div>
+      <button
+        type="button"
+        className={`hyper-toggle ${hyper ? "enabled" : ""}`}
+        aria-pressed={hyper}
+        onClick={() => setHyper((value) => !value)}
+      >
+        <span className="hyper-toggle-icon"><Sparkles size={19} /></span>
+        <span>
+          <strong>ハイパー花札</strong>
+          <small>{hyper ? "ON · 役を契約に変えて派手に連鎖" : "OFF · 通常のこいこい"}</small>
+        </span>
+        <b>{hyper ? "ON" : "OFF"}</b>
+      </button>
       <label className="field-label">
         部屋の名前
         <input
