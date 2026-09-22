@@ -1293,8 +1293,8 @@ html[data-motion="false"] .move-overlay * {
   border-radius: 12px;
 }
 
-/* Hyper mode is an intensity layer on the existing game table. It does not
-   change the board geometry, so the same responsive layout remains usable. */
+/* Hyper mode is an intensity layer on the existing game table. The HTML board
+   stays responsive while Scene supplies the matching 3D table underneath. */
 .hyper-table {
   isolation: isolate;
   border-color: rgba(239, 196, 102, .68);
@@ -1309,13 +1309,11 @@ html[data-motion="false"] .move-overlay * {
   z-index: 0;
   border-radius: 50%;
   background: radial-gradient(ellipse, rgba(245, 188, 76, .11), rgba(231, 86, 46, .045) 38%, transparent 72%);
-  filter: blur(8px);
   animation: hyper-core 3.8s ease-in-out infinite;
 }
 .hyper-table .hana-card {
   transform-style: preserve-3d;
-  filter: saturate(1.12) drop-shadow(0 8px 8px rgba(0, 0, 0, .26));
-  box-shadow: 0 0 0 1px rgba(255, 214, 125, .28), 0 0 18px rgba(229, 122, 46, .10), 0 8px 12px rgba(0, 0, 0, .45);
+  box-shadow: 0 0 0 1px rgba(255, 214, 125, .28), 0 0 12px rgba(229, 122, 46, .09), 0 6px 9px rgba(0, 0, 0, .4);
 }
 .hyper-table .field-cards {
   perspective: 900px;
@@ -1356,7 +1354,6 @@ html[data-motion="false"] .move-overlay * {
   top: 30%;
   left: 16%;
   background: linear-gradient(100deg, transparent, rgba(255, 199, 81, .11), transparent 68%);
-  filter: blur(10px);
   transform: rotate(-17deg) skewX(-24deg);
   animation: hyper-beam 4.5s ease-in-out infinite;
 }
@@ -1380,7 +1377,6 @@ html[data-motion="false"] .move-overlay * {
   width: clamp(30px, 8%, 74px);
   aspect-ratio: 240 / 380;
   transform-style: preserve-3d;
-  filter: drop-shadow(0 0 13px rgba(244, 174, 69, .55));
   animation: hyper-stage-card-float 5.6s ease-in-out infinite;
 }
 .hyper-stage-card .hana-card {
@@ -1478,14 +1474,14 @@ html[data-motion="false"] .move-overlay * {
 @keyframes hyper-beam { 0%, 100% { opacity: .18; transform: translateX(-12%) rotate(-17deg) skewX(-24deg); } 50% { opacity: .82; transform: translateX(16%) rotate(-17deg) skewX(-24deg); } }
 @keyframes hyper-spark { 0%, 100% { opacity: .15; transform: translate3d(0, 8px, 0) scale(.6); } 50% { opacity: 1; transform: translate3d(4px, -12px, 0) scale(1.5); } }
 @keyframes hyper-stage-card-float { 0%, 100% { margin-top: -4px; } 50% { margin-top: 13px; } }
-.hyper-contract-cutin { position: fixed; inset: 0; z-index: 120; pointer-events: none; display: grid; place-items: center; overflow: hidden; animation: hyper-cutin-in 4.6s cubic-bezier(.2,.8,.2,1) both; }
-.hyper-contract-cutin::before { content: ""; position: absolute; inset: 35% -15%; background: linear-gradient(90deg, transparent, rgba(15, 30, 24, .86) 15%, rgba(15, 30, 24, .95) 50%, rgba(15, 30, 24, .86) 85%, transparent); border-top: 1px solid rgba(255, 204, 94, .58); border-bottom: 1px solid rgba(255, 204, 94, .38); box-shadow: 0 0 42px rgba(228, 97, 46, .35); transform: skewY(-3deg); }
-.hyper-contract-cutin-rays { position: absolute; width: 90vmax; height: 90vmax; border: 1px solid rgba(244, 193, 82, .38); border-radius: 50%; box-shadow: 0 0 0 16px rgba(244, 193, 82, .05), 0 0 0 34px rgba(221, 80, 43, .04), 0 0 0 62px rgba(244, 193, 82, .03); animation: hyper-cutin-rays 4.6s ease-out both; }
-.hyper-contract-cutin-copy { position: relative; display: grid; justify-items: center; gap: 5px; text-align: center; transform: skewY(-3deg); text-shadow: 0 0 14px rgba(249, 184, 69, .8); }
+.hyper-contract-cutin { position: fixed; inset: 0; z-index: 120; pointer-events: none; display: grid; place-items: center; overflow: hidden; isolation: isolate; background: radial-gradient(ellipse at 50% 50%, rgba(91, 50, 30, .24), transparent 58%), rgba(4, 12, 9, .92); animation: hyper-cutin-in 4.6s cubic-bezier(.2,.8,.2,1) both; }
+.hyper-contract-cutin::before { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 0 28%, rgba(15, 30, 24, .82) 32%, rgba(15, 30, 24, .96) 50%, rgba(15, 30, 24, .82) 68%, transparent 72%), radial-gradient(ellipse at 50% 50%, rgba(239, 176, 66, .08), transparent 54%); border-block: 1px solid rgba(255, 204, 94, .46); box-shadow: inset 0 0 100px rgba(228, 97, 46, .16); transform: none; z-index: 0; }
+.hyper-contract-cutin-rays { position: absolute; z-index: 1; width: 90vmax; height: 90vmax; border: 1px solid rgba(244, 193, 82, .38); border-radius: 50%; box-shadow: 0 0 0 16px rgba(244, 193, 82, .05), 0 0 0 34px rgba(221, 80, 43, .04), 0 0 0 62px rgba(244, 193, 82, .03); animation: hyper-cutin-rays 4.6s ease-out both; }
+.hyper-contract-cutin-copy { position: relative; z-index: 1; display: grid; justify-items: center; gap: 5px; text-align: center; transform: skewY(-3deg); text-shadow: 0 0 14px rgba(249, 184, 69, .8); }
 .hyper-contract-cutin-copy span { color: #f4c568; font-size: clamp(9px, 1.1vw, 13px); letter-spacing: .32em; }
 .hyper-contract-cutin-copy strong { color: #fff1bf; font-family: serif; font-size: clamp(50px, 8vw, 128px); line-height: .92; letter-spacing: .18em; margin-left: .18em; }
 .hyper-contract-cutin-copy small { color: #e8cf99; font-size: clamp(10px, 1.4vw, 15px); letter-spacing: .1em; }
-.hyper-contract-cutin-seal { position: absolute; right: 17%; top: 26%; display: grid; place-items: center; width: clamp(48px, 6vw, 86px); aspect-ratio: 1; border: 2px solid #dd7850; color: #efaa74; font-family: serif; font-size: clamp(24px, 3vw, 48px); transform: rotate(11deg); box-shadow: 0 0 18px rgba(234, 86, 54, .55), inset 0 0 14px rgba(234, 86, 54, .23); animation: hyper-seal 4.6s ease-out both; }
+.hyper-contract-cutin-seal { position: absolute; z-index: 1; right: 17%; top: 26%; display: grid; place-items: center; width: clamp(48px, 6vw, 86px); aspect-ratio: 1; border: 2px solid #dd7850; color: #efaa74; font-family: serif; font-size: clamp(24px, 3vw, 48px); transform: rotate(11deg); box-shadow: 0 0 18px rgba(234, 86, 54, .55), inset 0 0 14px rgba(234, 86, 54, .23); animation: hyper-seal 4.6s ease-out both; }
 @keyframes hyper-cutin-in { from { opacity: 0; } 18% { opacity: 1; } 84% { opacity: 1; } to { opacity: 0; } }
 @keyframes hyper-cutin-rays { from { transform: scale(.32) rotate(-22deg); opacity: .1; } 42% { opacity: .88; } to { transform: scale(1.1) rotate(11deg); opacity: 0; } }
 @keyframes hyper-seal { from { transform: scale(2.4) rotate(35deg); opacity: 0; } 26% { transform: scale(1) rotate(11deg); opacity: 1; } to { transform: scale(.82) rotate(11deg); opacity: .1; } }

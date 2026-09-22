@@ -23,7 +23,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
     settingsRef.current = { intensity, active, cardSkin };
     readyRef.current = onReady;
     invalidateRef.current();
-  }, [intensity, active, onReady]);
+  }, [intensity, active, cardSkin, onReady]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -33,6 +33,8 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
     let initialized = false;
     let frame = 0;
     let previousTime = 0;
+    let lastRenderTime = 0;
+    let renderedPixelRatio = 0;
     let elapsed = 0;
     let renderer: THREE.WebGPURenderer | undefined;
     let resizeObserver: ResizeObserver | undefined;
@@ -67,7 +69,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       blending: THREE.AdditiveBlending,
     }));
     const dust = new THREE.InstancedMesh(
-      geometry(new THREE.IcosahedronGeometry(0.016, 0)), dustMaterial, 160,
+      geometry(new THREE.IcosahedronGeometry(0.016, 0)), dustMaterial, 96,
     );
     dust.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     dust.frustumCulled = false;
@@ -85,7 +87,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.26,
         side: THREE.DoubleSide, depthWrite: false }),
     ));
-    const petals = Array.from({ length: 22 }, (_, i) => {
+    const petals = Array.from({ length: 12 }, (_, i) => {
       const petal = new THREE.Mesh(petalGeometry, petalMaterials[i % petalMaterials.length]);
       petal.scale.setScalar(0.4 + random(i + 80) * 0.85);
       scene.add(petal);
@@ -106,7 +108,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       }));
       orbitMaterials.push(ringMaterial);
       const ring = new THREE.Mesh(
-        geometry(new THREE.TorusGeometry(4.6 + i * 0.19, 0.008, 3, 220)), ringMaterial,
+        geometry(new THREE.TorusGeometry(4.6 + i * 0.19, 0.008, 3, 96)), ringMaterial,
       );
       ring.scale.y = 1.24;
       ring.rotation.set(i * 0.047, i * 0.038, i * 0.02);
@@ -191,6 +193,52 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
     hyperCardGroup.visible = false;
     scene.add(hyperCardGroup);
 
+    // A real 3D table sits behind the HTML game controls. The camera orbit is
+    // deliberately slow, so the table reads as depth instead of becoming a
+    // distracting motion layer. Its geometry is intentionally small and cheap.
+    const hyperBoardGroup = new THREE.Group();
+    hyperBoardGroup.position.set(0, -0.35, -5.1);
+    const boardFrame = new THREE.Mesh(
+      geometry(new THREE.BoxGeometry(17.6, 10.6, 0.34)),
+      material(new THREE.MeshBasicMaterial({
+        color: 0x102e24,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })),
+    );
+    const boardSurface = new THREE.Mesh(
+      geometry(new THREE.PlaneGeometry(17.1, 10.1)),
+      material(new THREE.MeshBasicMaterial({
+        color: 0x174735,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })),
+    );
+    boardSurface.position.z = 0.19;
+    hyperBoardGroup.add(boardFrame, boardSurface);
+    const boardLineMaterial = material(new THREE.LineBasicMaterial({
+      color: 0xe7c56e,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    }));
+    const boardLinePoints = [
+      new THREE.Vector3(-8.25, -4.75, 0.23),
+      new THREE.Vector3(8.25, -4.75, 0.23),
+      new THREE.Vector3(8.25, 4.75, 0.23),
+      new THREE.Vector3(-8.25, 4.75, 0.23),
+      new THREE.Vector3(-8.25, -4.75, 0.23),
+    ];
+    const boardOutline = new THREE.Line(
+      geometry(new THREE.BufferGeometry().setFromPoints(boardLinePoints)),
+      boardLineMaterial,
+    );
+    hyperBoardGroup.add(boardOutline);
+    hyperBoardGroup.visible = false;
+    scene.add(hyperBoardGroup);
+
     // Use the same OSS card art as the playable table. The generated face above
     // remains a deterministic fallback while an SVG texture is loading.
     const textureLoader = new THREE.TextureLoader();
@@ -231,7 +279,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
     const hyperSparks = new THREE.InstancedMesh(
       geometry(new THREE.TetrahedronGeometry(0.045, 0)),
       hyperSparkMaterial,
-      96,
+      48,
     );
     hyperSparks.frustumCulled = false;
     scene.add(hyperSparks);
@@ -249,7 +297,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       }));
       hyperRingMaterials.push(ringMaterial);
       const ring = new THREE.Mesh(
-        geometry(new THREE.TorusGeometry(3.1 + i * 0.43, 0.018 + i * 0.006, 5, 180)),
+        geometry(new THREE.TorusGeometry(3.1 + i * 0.43, 0.018 + i * 0.006, 5, 72)),
         ringMaterial,
       );
       ring.rotation.set(Math.PI / 2 + i * 0.12, i * 0.18, i * 0.33);
@@ -314,12 +362,30 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       frame = 0;
       if (disposed || !initialized || !renderer) return;
       const moving = settingsRef.current.active && !reducedMotion.matches && !document.hidden;
+      const strength = Math.max(0, Math.min(2, settingsRef.current.intensity));
+      const hyperActive = strength > 1.08;
+      // Rendering a full-screen canvas at display refresh rate is needlessly
+      // expensive for a decorative layer. Keep the animation time based, but
+      // cap actual GPU presents to 30fps in Hyper and 24fps elsewhere.
+      const frameInterval = hyperActive ? 1000 / 24 : 1000 / 18;
+      if (moving && lastRenderTime && time - lastRenderTime < frameInterval) {
+        frame = window.requestAnimationFrame(draw);
+        return;
+      }
+      lastRenderTime = time;
+      const targetPixelRatio = Math.min(
+        window.devicePixelRatio || 1,
+        hyperActive ? 0.82 : 0.68,
+      );
+      if (Math.abs(renderedPixelRatio - targetPixelRatio) > 0.01) {
+        renderedPixelRatio = targetPixelRatio;
+        renderer.setPixelRatio(targetPixelRatio);
+        renderer.setSize(Math.max(1, host.clientWidth), Math.max(1, host.clientHeight), false);
+      }
       const delta = previousTime ? Math.min((time - previousTime) / 1000, 0.05) : 0;
       previousTime = time;
       if (moving) elapsed += delta;
-      const strength = Math.max(0, Math.min(2, settingsRef.current.intensity));
       const motion = elapsed * 0.26;
-      const hyperActive = strength > 1.08;
       loadHyperCardTextures(settingsRef.current.cardSkin);
 
       for (let i = 0; i < dust.count; i += 1) {
@@ -368,6 +434,19 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       hyperCardGroup.rotation.x = Math.sin(motion * 0.22) * 0.09;
       hyperCardGroup.rotation.y = Math.cos(motion * 0.18) * 0.14;
       hyperCardGroup.position.y = 0.1 + Math.sin(motion * 0.31) * 0.14;
+      hyperBoardGroup.visible = hyperActive;
+      const boardOpacity = hyperActive ? Math.min(1, (strength - 1) * 2) : 0;
+      (boardFrame.material as THREE.MeshBasicMaterial).opacity = boardOpacity * 0.32;
+      (boardSurface.material as THREE.MeshBasicMaterial).opacity = boardOpacity * 0.16;
+      boardLineMaterial.opacity = boardOpacity * 0.34;
+      // Orbit the camera around the actual board, instead of only rotating
+      // card sprites. This is the depth cue that makes Hyper feel like a 3D
+      // table while the ordinary room remains still and quiet.
+      const cameraAngle = motion * 0.34;
+      camera.position.x = hyperActive ? Math.sin(cameraAngle) * 1.65 : 0;
+      camera.position.y = hyperActive ? Math.sin(cameraAngle * 0.72) * 0.62 : 0;
+      camera.position.z = hyperActive ? 15 + Math.cos(cameraAngle * 0.8) * 0.45 : 15;
+      camera.lookAt(0, -0.2, -3.9);
       hyperSparks.visible = hyperActive;
       hyperSparkMaterial.opacity = hyperActive ? 0.44 * Math.min(1, (strength - 1) * 2) : 0;
       for (let i = 0; i < hyperSparks.count; i += 1) {
@@ -407,13 +486,16 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       camera.aspect = width / height;
       camera.position.z = camera.aspect < 0.75 ? 20 : 15;
       camera.updateProjectionMatrix();
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+      // Keep the first frame cheap too; draw() refines this when Hyper starts.
+      renderedPixelRatio = Math.min(window.devicePixelRatio || 1, 0.68);
+      renderer.setPixelRatio(renderedPixelRatio);
       renderer.setSize(width, height, false);
       invalidate();
     };
-    const onMotionPreference = () => { previousTime = 0; invalidate(); };
+    const onMotionPreference = () => { previousTime = 0; lastRenderTime = 0; invalidate(); };
     const onVisibility = () => {
       previousTime = 0;
+      lastRenderTime = 0;
       if (document.hidden) {
         window.cancelAnimationFrame(frame);
         frame = 0;
@@ -432,7 +514,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
 
       if (hasWebGPU) {
         try {
-          candidate = new THREE.WebGPURenderer({ antialias: true, alpha: true });
+          candidate = new THREE.WebGPURenderer({ antialias: false, alpha: true });
           await candidate.init();
         } catch {
           releaseRenderer(candidate);
@@ -446,13 +528,13 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
         // getContext succeeds, which is false when GPU rendering is disabled.
         const canvas = document.createElement('canvas');
         let context: WebGL2RenderingContext | null = null;
-        try { context = canvas.getContext('webgl2', { antialias: true, alpha: true }); } catch { /* Unavailable. */ }
+        try { context = canvas.getContext('webgl2', { antialias: false, alpha: true }); } catch { /* Unavailable. */ }
         if (!context) {
           announce('2D');
           return;
         }
         try {
-          candidate = new THREE.WebGPURenderer({ canvas, antialias: true, alpha: true, forceWebGL: true });
+          candidate = new THREE.WebGPURenderer({ canvas, antialias: false, alpha: true, forceWebGL: true });
           await candidate.init();
         } catch {
           releaseRenderer(candidate);
