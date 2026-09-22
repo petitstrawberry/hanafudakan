@@ -50,7 +50,6 @@ pub struct HyperOption {
 #[serde(rename_all = "camelCase")]
 pub struct HyperState {
     pub contracts: [Vec<HyperContract>; 2],
-    pub stake: [u32; 2],
     pub bloom: [u32; 2],
     pub chain: [u8; 2],
     pub sealed: [Vec<u8>; 2],
@@ -103,7 +102,6 @@ pub struct Game {
     pub winner: Option<usize>,
     pub round_points: u32,
     pub hyper_contracts: [Vec<HyperContract>; 2],
-    pub hyper_stake: [u32; 2],
     pub hyper_bloom: [u32; 2],
     pub hyper_chain: [u8; 2],
     pub hyper_sealed: [Vec<u8>; 2],
@@ -142,7 +140,6 @@ impl Game {
             winner: None,
             round_points: 0,
             hyper_contracts: [vec![], vec![]],
-            hyper_stake: [0; 2],
             hyper_bloom: [0; 2],
             hyper_chain: [0; 2],
             hyper_sealed: [vec![], vec![]],
@@ -244,6 +241,26 @@ impl Game {
                 game.push_log(format!("{}番手、こいこい！", player + 1));
                 game.advance_turn();
             } else {
+                if game.hyper {
+                    // Hyper化した敗者の取り札は勝者のものになる。契約は力だが、
+                    // 負ければ蓄えた役ごと奪われる。
+                    let loser = 1 - player;
+                    if !game.hyper_contracts[loser].is_empty()
+                        && !game.captured[loser].is_empty()
+                    {
+                        let spoils = std::mem::take(&mut game.captured[loser]);
+                        let count = spoils.len();
+                        game.hyper_sealed[loser].clear();
+                        game.captured[player].extend(spoils);
+                        game.push_log(format!(
+                            "Hyperの代償、{}番手の取り札{}枚が{}番手へ。",
+                            loser + 1,
+                            count,
+                            player + 1
+                        ));
+                    }
+                }
+                let points = total(&evaluate(&game.active_captured(player)));
                 let round_points = if game.hyper {
                     let contracts = game.hyper_contracts[player].len() as f64;
                     let multiplier = match contracts {
@@ -257,7 +274,7 @@ impl Game {
                             * f64::from(
                                 game.hyper_chain[player].saturating_sub(2).min(4),
                             );
-                    (((points + game.hyper_stake[player] + game.hyper_bloom[player]) as f64
+                    (((points + game.hyper_bloom[player]) as f64
                         * multiplier
                         * chain)
                         .ceil()) as u32
@@ -368,16 +385,15 @@ impl Game {
                 .into_iter()
                 .find(|option| option.role == role)
                 .ok_or("その役はHyper化できません。")?;
-            let returned = role_cards(&game.active_captured(player), &option.role);
-            if returned.is_empty() {
+            if role_cards(&game.active_captured(player), &option.role).is_empty() {
                 return Err("Hyper化する札がありません。".into());
             }
-            game.captured[player].retain(|card| !returned.contains(card));
-            game.deck.extend(returned.iter().copied());
-            game.deck.shuffle(&mut rand::thread_rng());
-            game.hyper_stake[player] += option.points;
+            // Hyper化は効果への変換。成立した役の札は取り札に残り、そのまま
+            // 得点に数え続けられる。Hyper化そのものは得点にならない。
             game.hyper_contracts[player].push(option.contract.clone());
             game.checkpoint[player] = total(&evaluate(&game.active_captured(player)));
+            // 盤面を仕切り直す。両手札・場札・山札を集めて配り直す。
+            game.hyper_reset_board();
             if option.contract.id == "storm" {
                 game.hyper_storm_field();
             }
@@ -397,16 +413,12 @@ impl Game {
                 game.hyper_night_reorder(player);
             }
             game.push_log(format!(
-                "{}番手、{}を{}へHyper化。契約『{}』、賭け点{}。",
+                "{}番手、{}を効果『{}』へHyper化。{}。盤面を仕切り直し。",
                 player + 1,
                 option.role,
                 option.contract.name,
                 option.contract.description,
-                game.hyper_stake[player]
             ));
-            // 返却した実体札は山へ戻す。Hyper化そのものでは手札を増減させず、
-            // プレイヤー間の手数を偏らせない。連鎖は契約の追加めくりで伸ばす。
-            game.hands[player].sort_unstable();
             game.advance_turn();
             Ok(())
         })
@@ -415,7 +427,6 @@ impl Game {
     pub fn hyper_state(&self, player: Option<usize>) -> Option<HyperState> {
         self.hyper.then(|| HyperState {
             contracts: self.hyper_contracts.clone(),
-            stake: self.hyper_stake,
             bloom: self.hyper_bloom,
             chain: self.hyper_chain,
             sealed: self.hyper_sealed.clone(),
@@ -509,7 +520,6 @@ impl Game {
         self.koikoi = [0; 2];
         self.checkpoint = [0; 2];
         self.hyper_contracts = [vec![], vec![]];
-        self.hyper_stake = [0; 2];
         self.hyper_bloom = [0; 2];
         self.hyper_chain = [0; 2];
         self.hyper_sealed = [vec![], vec![]];
@@ -711,6 +721,58 @@ impl Game {
             self.hyper_pending_draws[player] += 1;
             self.push_log(format!("{}番手、CHAIN OVERDRIVE。追加めくり！", player + 1));
         }
+    }
+
+    /// Hyper化の仕切り直し。両手札・場札・山札・めくり札を集めて配り直す。
+    /// 取り札は残る。完成した役は得点に数え続けられ、新しい役の上積みだけが
+    /// 次の成立判定になる。取り札が多いほど配れる枚数は減る。
+    fn hyper_reset_board(&mut self) {
+        let mut pool: Vec<u8> = Vec::with_capacity(48);
+        pool.extend(self.hands[0].drain(..));
+        pool.extend(self.hands[1].drain(..));
+        pool.extend(self.field.drain(..));
+        pool.extend(self.deck.drain(..));
+        if let Some(card) = self.drawn_card.take() {
+            pool.push(card);
+        }
+        let pool_size = pool.len();
+        let mut rng = rand::thread_rng();
+        let mut attempt = 0;
+        loop {
+            pool.shuffle(&mut rng);
+            let mut stock = pool.clone();
+            let mut hands = [vec![], vec![]];
+            let mut field = vec![];
+            for _ in 0..8 {
+                if let Some(card) = stock.pop() {
+                    hands[0].push(card);
+                }
+                if let Some(card) = stock.pop() {
+                    hands[1].push(card);
+                }
+                if let Some(card) = stock.pop() {
+                    field.push(card);
+                }
+            }
+            let mut counts = [0u8; 12];
+            for &card in &field {
+                counts[month(card)] += 1;
+            }
+            attempt += 1;
+            if !counts.contains(&4) || attempt >= 10 || pool_size < 12 {
+                self.hands = hands;
+                self.field = field;
+                self.deck = stock;
+                break;
+            }
+        }
+        for hand in &mut self.hands {
+            hand.sort_unstable();
+        }
+        self.push_log(format!(
+            "天変地異、盤面を仕切り直し。残り{}枚で再開。",
+            pool_size
+        ));
     }
 
     fn hyper_storm_field(&mut self) {
@@ -1028,7 +1090,6 @@ mod tests {
             winner: None,
             round_points: 0,
             hyper_contracts: [vec![], vec![]],
-            hyper_stake: [0; 2],
             hyper_bloom: [0; 2],
             hyper_chain: [0; 2],
             hyper_sealed: [vec![], vec![]],
@@ -1221,24 +1282,38 @@ mod tests {
     }
 
     #[test]
-    fn hyper_contract_returns_role_cards_without_changing_hand_count() {
+    fn hyper_contract_keeps_captured_and_resets_the_board() {
         let mut game = fixture();
         game.hyper = true;
         game.phase = Phase::Decision;
         game.turn = 0;
         game.hands = [vec![4], vec![12]];
-        game.captured[0] = vec![20, 24, 36];
+        game.captured[0] = vec![20, 24, 36, 0, 8, 28];
         game.deck = vec![1, 2, 3];
         let options = game.hyper_options(0);
         assert!(options.iter().any(|option| option.role == "猪鹿蝶"));
         game.hyper(0, "猪鹿蝶".into()).unwrap();
-        assert!(game.captured[0].is_empty());
+        // The converted yaku stays in the pile and keeps scoring.
+        assert_eq!(game.captured[0], vec![20, 24, 36, 0, 8, 28]);
         assert_eq!(game.hyper_contracts[0][0].id, "beast");
-        assert_eq!(game.hyper_stake[0], 5);
-        assert_eq!(game.hands[0].len(), 1);
+        assert_eq!(
+            game.checkpoint[0],
+            total(&evaluate(&game.active_captured(0)))
+        );
+        // Five free cards are redealt round-robin: hand, hand, field.
+        assert_eq!(game.hands[0].len(), 2);
+        assert_eq!(game.hands[1].len(), 2);
+        assert_eq!(game.field.len(), 1);
+        assert!(game.deck.is_empty());
         assert_eq!(game.phase, Phase::Play);
         assert_eq!(game.turn, 1);
-        assert_eq!(game.deck.len(), 6);
+        // The converted role is owned, so it is not offered again, while the
+        // stacked 三光 in the same pile still is.
+        game.phase = Phase::Decision;
+        game.turn = 0;
+        let options = game.hyper_options(0);
+        assert!(options.iter().any(|option| option.role == "三光"));
+        assert!(options.iter().all(|option| option.role != "猪鹿蝶"));
     }
 
     #[test]
@@ -1277,12 +1352,18 @@ mod tests {
         game.hands = [vec![4], vec![12]];
         game.captured[0] = vec![0, 8, 28];
         game.field = vec![40, 41];
-        game.deck = vec![1, 2, 3];
+        game.deck = vec![
+            1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 21, 22, 23, 25, 26,
+        ];
         game.hyper(0, "三光".into()).unwrap();
-        assert_eq!(game.hands[0].len(), 1);
+        // The reset gathered 24 free cards and redealt them evenly, so the
+        // hands and field are rebuilt without touching the captured pile.
+        assert_eq!(game.hands[0].len(), 8);
+        assert_eq!(game.hands[1].len(), 8);
         assert_eq!(game.field.len(), 8);
         assert!(game.deck.is_empty());
         assert!(game.hyper_contracts[0].iter().any(|contract| contract.id == "storm"));
+        assert_eq!(game.captured[0], vec![0, 8, 28]);
     }
 
     #[test]
@@ -1299,6 +1380,34 @@ mod tests {
         assert!(game.field.contains(&5));
         assert!(game.field.contains(&9));
         assert_eq!(game.turn, 1);
+    }
+
+    #[test]
+    fn hyper_loss_transfers_the_contract_holders_pile_to_the_winner() {
+        let mut game = fixture();
+        game.hyper = true;
+        game.phase = Phase::Decision;
+        game.turn = 0;
+        game.hyper_contracts[1].push(hyper_contract_for_role("猪鹿蝶").unwrap());
+        game.captured[0] = vec![0, 8, 28];
+        game.captured[1] = vec![20, 24, 36];
+        game.decision(0, false).unwrap();
+        // The loser held a contract, so the pile changes hands before scoring.
+        assert!(game.captured[1].is_empty());
+        assert_eq!(game.captured[0], vec![0, 8, 28, 20, 24, 36]);
+        assert_eq!(game.scores[0], total(&evaluate(&game.captured[0])));
+        assert_eq!(game.winner, Some(0));
+
+        // Without a contract on the losing side the pile stays put.
+        let mut clean = fixture();
+        clean.hyper = true;
+        clean.phase = Phase::Decision;
+        clean.turn = 0;
+        clean.captured[0] = vec![0, 8, 28];
+        clean.captured[1] = vec![20, 24, 36];
+        clean.decision(0, false).unwrap();
+        assert_eq!(clean.captured[1], vec![20, 24, 36]);
+        assert_eq!(clean.scores[0], 5);
     }
 
     #[test]
