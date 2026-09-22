@@ -1,3 +1,5 @@
+import type { CardSkin } from "./cardSkin";
+
 export type CardKind = 'bright' | 'animal' | 'ribbon' | 'chaff';
 export interface HanafudaCard { id: number; month: number; name: string; kind: CardKind }
 
@@ -28,6 +30,9 @@ export const cards: HanafudaCard[] = names.map((name, id) => ({
   kind: brights.has(id) ? 'bright' : animals.has(id) ? 'animal' : ribbons.has(id) ? 'ribbon' : 'chaff',
 }));
 
-export function cardImage(id: number): string {
-  return Number.isInteger(id) && id >= 0 && id < 48 ? `/cards/${id}.svg` : '/cards/back.svg';
+export function cardImage(id: number, skin: CardSkin = "recolored"): string {
+  const directory = skin === "classic" ? "cards-classic" : "cards";
+  return Number.isInteger(id) && id >= 0 && id < 48
+    ? `/${directory}/${id}.svg`
+    : `/${directory}/back.svg`;
 }

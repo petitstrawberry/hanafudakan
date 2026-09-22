@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { cardImage, cards, type CardKind } from "../lib/cards";
+import { useCardSkin } from "../lib/cardSkin";
 import type { YakuStatus } from "../lib/yakuStatus";
 import "../captured-yaku.css";
 
@@ -37,6 +38,7 @@ export default function CapturedYaku({
   onRoleSelect,
   selectedRoleId,
 }: CapturedYakuProps) {
+  const { skin } = useCardSkin();
   return (
     <section
       className={`captured-yaku ${self ? "captured-yaku-self" : "captured-yaku-opponent"}`}
@@ -86,7 +88,7 @@ export default function CapturedYaku({
                         title={`${cards[id].month}月・${cards[id].name}`}
                       >
                         <img
-                          src={cardImage(id)}
+                          src={cardImage(id, skin)}
                           alt={`${cards[id].month}月・${cards[id].name}`}
                           draggable={false}
                         />

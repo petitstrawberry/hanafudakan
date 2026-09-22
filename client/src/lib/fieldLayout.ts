@@ -28,6 +28,7 @@ export function fitFieldLayout(
   width: number,
   height: number,
   maxCardWidth = 64,
+  preferredColumns?: number,
 ): FieldLayout {
   const total = Math.ceil(nonNegativeFinite(count));
   const availableWidth = nonNegativeFinite(width);
@@ -48,7 +49,11 @@ export function fitFieldLayout(
   let bestUnused = Infinity;
   let bestShapeDifference = Infinity;
 
-  for (let columns = 1; columns <= total; columns += 1) {
+  const firstColumn = preferredColumns
+    ? Math.min(total, Math.max(1, Math.round(preferredColumns)))
+    : 1;
+  const lastColumn = preferredColumns ? firstColumn : total;
+  for (let columns = firstColumn; columns <= lastColumn; columns += 1) {
     const rows = Math.ceil(total / columns);
     const fits = (cardWidth: number) => {
       const gap = cardGap(cardWidth);

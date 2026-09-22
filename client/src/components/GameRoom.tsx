@@ -25,6 +25,7 @@ import {
   type YakuAnnouncement,
 } from "../lib/yakuAnnouncements";
 import { cards, cardImage } from "../lib/cards";
+import { useCardSkin } from "../lib/cardSkin";
 import { playSound } from "../lib/audio";
 import { getYakuStatuses } from "../lib/yakuStatus";
 import { fitFieldLayout } from "../lib/fieldLayout";
@@ -106,6 +107,7 @@ export default function GameRoom({
   leave,
   copyInvite,
 }: Props) {
+  const { skin } = useCardSkin();
   const [room, setRoom] = useState<RoomView>(incoming);
   const displayed = useRef<RoomView>(incoming);
   const latest = useRef<RoomView>(incoming);
@@ -199,6 +201,7 @@ export default function GameRoom({
         fieldViewport.width,
         fieldViewport.height,
         fieldViewport.maxCardWidth,
+        4,
       ),
     [fieldCardCount, fieldViewport],
   );
@@ -1313,7 +1316,7 @@ export default function GameRoom({
                     className={`${blocked ? "role-card-blocked" : ""} ${room.field.includes(id) ? "role-card-in-field" : ""}`}
                     title={`${nameOf(id)}${blocked ? " · 相手が獲得済み" : room.field.includes(id) ? " · 場にあります" : ""}`}
                   >
-                    <img src={cardImage(id)} alt={nameOf(id)} />
+                    <img src={cardImage(id, skin)} alt={nameOf(id)} />
                     {blocked && <X size={13} />}
                   </span>
                 );
@@ -1343,6 +1346,7 @@ export default function GameRoom({
 }
 
 function MoveOverlay({ flight }: { flight: Flight }) {
+  const { skin } = useCardSkin();
   const { source, target, destination, event, stage, duration } = flight;
   const position: CSSProperties = {
     "--source-x": `${source.x}px`,
@@ -1381,12 +1385,12 @@ function MoveOverlay({ flight }: { flight: Flight }) {
                 } as CSSProperties
               }
             >
-              <img src={cardImage(id)} alt="" />
+              <img src={cardImage(id, skin)} alt="" />
             </div>
           ),
         )}
       <div className="flying-card played-copy" key={`${event.id}-${stage}`}>
-        <img src={cardImage(event.cardId)} alt="" />
+        <img src={cardImage(event.cardId, skin)} alt="" />
       </div>
       {(stage === "stack" || stage === "collect") && event.captured && (
         <div

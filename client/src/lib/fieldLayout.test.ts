@@ -82,6 +82,15 @@ test("when maximum card sizes tie, complete rows beat empty cells", () => {
   assert.equal(layout.columns * layout.rows, 8);
 });
 
+test("the live field can reserve a readable four-column opening", () => {
+  const layout = fitFieldLayout(8, 600, 260, 64, 4);
+  assert.equal(layout.columns, 4);
+  assert.equal(layout.rows, 2);
+  assert.ok(layout.cardWidth > 0);
+  assert.ok(layout.width <= 600);
+  assert.ok(layout.height <= 260);
+});
+
 test("chosen card size is maximal across every column count with responsive spacing", () => {
   for (const count of [8, 9, 16, 24]) {
     for (const [width, height] of rectangles) {

@@ -15,6 +15,12 @@ The imported SVG bytes and artwork are **unmodified**. Only local filenames have
 
 `client/public/cards/back.svg` is original artwork made for this project. It was not imported from Hanafuda-Louie-Recolor and remains unchanged by the card-face import.
 
+The optional original-palette deck in `client/public/cards-classic/0.svg` through `47.svg` is the unmodified Louie Mantia artwork from Wikimedia Commons. It is also licensed under **CC BY-SA 4.0**.
+
+- Wikimedia Commons category: <https://commons.wikimedia.org/wiki/Category:Hanafuda_cards_by_Louie_Mantia>
+- Local attribution and source manifest: [client/public/cards-classic/ATTRIBUTION.md](client/public/cards-classic/ATTRIBUTION.md), [manifest.json](client/public/cards-classic/manifest.json)
+- Local license text: [LICENSE-CC-BY-SA-4.0.txt](client/public/cards-classic/LICENSE-CC-BY-SA-4.0.txt)
+
 ## Noto Japanese fonts
 
 The self-hosted Noto Sans JP and Noto Serif JP variable WOFF2 files in `client/public/fonts/` come from Google Fonts and retain their upstream **SIL Open Font License 1.1**.
