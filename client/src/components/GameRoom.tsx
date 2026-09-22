@@ -64,6 +64,11 @@ type Flight = {
 const nameOf = (id: number) => cards[id]?.name || "花札";
 const sameMonth = (left: number, right: number) =>
   Math.floor(left / 4) === Math.floor(right / 4);
+const fieldWobble = (id: number, index: number) => ({
+  "--field-shift-x": `${((id * 5 + index * 3) % 7) - 3}px`,
+  "--field-shift-y": `${((id * 3 + index * 5) % 5) - 2}px`,
+  "--field-rotate": `${(((id * 7 + index * 11) % 9) - 4) / 3}deg`,
+});
 const motionEnabled = () =>
   localStorage.getItem("hana-motion") !== "false" &&
   !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -893,10 +898,11 @@ export default function GameRoom({
                         } as CSSProperties
                       }
                     >
-                      {room.field.map((id) => (
+                      {room.field.map((id, index) => (
                         <div
                           className={`field-slot ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""}`}
                           key={id}
+                          style={fieldWobble(id, index) as CSSProperties}
                         >
                           <Card
                             id={id}
@@ -1022,6 +1028,16 @@ export default function GameRoom({
                   <div className="decision-shade">
                     <div className="decision-panel">
                       <span className="eyebrow">A WINNING HAND</span>
+                      <div className="decision-scoreline" aria-label="現在の累計得点">
+                        <span>現在の累計</span>
+                        <strong>
+                          {room.players[own]?.score ?? 0}
+                          <small>文</small>
+                        </strong>
+                        <span className="decision-opponent-score">
+                          相手 {room.players[opponent]?.score ?? 0}文
+                        </span>
+                      </div>
                       <h2>この勝負、どうする？</h2>
                       <div className="decision-yaku">
                         {room.yaku[own]?.map((y) => (

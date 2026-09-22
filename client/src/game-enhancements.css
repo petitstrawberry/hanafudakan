@@ -47,6 +47,8 @@
 .field-slot {
   position: relative;
   border-radius: 4px;
+  transform: translate(var(--field-shift-x, 0px), var(--field-shift-y, 0px))
+    rotate(var(--field-rotate, 0deg));
   transition:
     box-shadow 0.2s,
     transform 0.2s;
@@ -63,7 +65,11 @@
   cursor: pointer;
 }
 .field-slot.match-target:hover {
-  transform: translateY(-5px) rotate(-2deg);
+  transform: translate(
+      var(--field-shift-x, 0px),
+      calc(var(--field-shift-y, 0px) - 5px)
+    )
+    rotate(calc(var(--field-rotate, 0deg) - 2deg));
 }
 .field-slot.assist-target {
   box-shadow:
@@ -482,6 +488,8 @@
 .enhanced-game .decision-shade {
   overflow: hidden;
   border-radius: 8px;
+  background: #09160d7a;
+  backdrop-filter: blur(2px);
 }
 .decision-points {
   display: flex;
