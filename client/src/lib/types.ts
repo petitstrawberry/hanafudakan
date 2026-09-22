@@ -36,6 +36,7 @@ export type HyperOption = {
 };
 export type HyperState = {
   contracts: HyperContract[][];
+  stake: number[];
   bloom: number[];
   chain: number[];
   sealed: number[][];

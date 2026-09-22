@@ -96,6 +96,7 @@ const signature = (room: RoomView) =>
     room.players.map((p) => [p.handCount, p.captured, p.score]),
     room.koikoi,
     room.hyper?.contracts,
+    room.hyper?.stake,
     room.hyper?.bloom,
     room.hyper?.chain,
     room.hyper?.options,
@@ -829,7 +830,7 @@ export default function GameRoom({
     : (points >= 7 ? 2 : 1) * (room.koikoi[opponent] > 0 ? 2 : 1);
   const hyperProjected = hyperMode
     ? Math.ceil(
-        (points + (hyperState?.bloom[own] || 0)) *
+        (points + (hyperState?.stake[own] || 0) + (hyperState?.bloom[own] || 0)) *
           hyperMultiplier *
           (1 + 0.25 * Math.min(4, Math.max(0, (hyperState?.chain[own] || 0) - 2))),
       )
@@ -1268,7 +1269,7 @@ export default function GameRoom({
                                 }
                               >
                                 <strong>{option.contract.name}</strong>
-                                <span>{option.role} · 取り札は残る</span>
+                                <span>{option.role} · 賭け金{option.points}文</span>
                                 <small>{option.contract.description}</small>
                               </button>
                             ))}
@@ -1635,7 +1636,7 @@ function HyperHud({
       <div className="hyper-hud-title">
         <span className="hyper-pulse" />
         <strong>HYPER 花札</strong>
-        <small>役を契約に変換して、連鎖を伸ばす</small>
+        <small>役を契約と賭け金に変えて、連鎖を伸ばす</small>
         <em>{active ? "ACTIVE" : "SYNCED"}</em>
       </div>
       <div className="hyper-hud-main">
@@ -1644,7 +1645,7 @@ function HyperHud({
         </div>
         <div className="hyper-hud-center">
           <div className="hyper-hud-metrics">
-            <span>契約 <b>{state.contracts[own]?.length || 0}</b></span>
+            <span>賭け点 <b>{state.stake[own] || 0}</b></span>
             <span>花力 <b>{state.bloom[own] || 0}</b></span>
           </div>
           <div className="hyper-hud-chain-readout">
