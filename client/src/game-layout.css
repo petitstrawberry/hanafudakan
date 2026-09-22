@@ -10,8 +10,17 @@
 .workspace:has(.enhanced-game) > .footer {
   display: none;
 }
+.workspace:has(.enhanced-game) {
+  height: 100dvh;
+  overflow: hidden;
+  padding-bottom: 0;
+}
 .enhanced-game.game-page {
   padding: 12px 0 8px;
+}
+.enhanced-game .game-primary,
+.enhanced-game .game-table {
+  width: 100%;
 }
 .enhanced-game .game-heading {
   margin-bottom: 12px;
@@ -217,6 +226,9 @@
   .enhanced-game .selection-tray {
     margin: 3px 0;
   }
+  .enhanced-game .game-table:not(:has(.waiting-table)) {
+    min-height: max(0px, calc(100dvh - 180px));
+  }
 }
 
 /* Portrait: four categories remain in a single row above and below the field. */
@@ -231,9 +243,7 @@
     padding: 5px 8px;
   }
   .enhanced-game .opponent-player { margin-left: 0; }
-  .enhanced-game .own-player { margin-left: auto; margin-right: 0; text-align: right; }
-  .enhanced-game .own-player .player-name strong,
-  .enhanced-game .own-player .player-name > span { justify-content: flex-end; }
+  .enhanced-game .own-player { margin-left: auto; margin-right: 0; text-align: left; }
   .enhanced-game .opponent-hand {
     height: 30px;
     margin-top: 4px;
@@ -258,6 +268,11 @@
 }
 
 @media (max-width: 600px) {
+  .workspace:has(.enhanced-game) {
+    height: 100dvh;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
   .workspace:has(.enhanced-game) > main {
     padding-inline: 10px;
   }
@@ -266,7 +281,7 @@
   }
   .enhanced-game.game-page {
     padding-top: 7px;
-    padding-bottom: 70px;
+    padding-bottom: 4px;
   }
   .enhanced-game .game-heading {
     gap: 6px 10px;
@@ -298,7 +313,8 @@
     min-height: 27px;
   }
   .enhanced-game .game-table {
-    padding: 9px 9px 11px;
+    padding: 7px 9px 7px;
+    min-height: max(0px, calc(100dvh - 189px));
   }
   .enhanced-game .player-avatar {
     width: 23px;
@@ -306,12 +322,24 @@
     font-size: 12px;
   }
   .enhanced-game .player-score { font-size: 20px; }
-  .enhanced-game .table-middle { gap: 10px; }
+  .enhanced-game .table-middle { gap: 8px; min-height: 145px; padding-block: 6px; }
   .enhanced-game .field-cards { gap: 9px 7px; }
   .enhanced-game .field-cards .hana-card { width: 43px; }
   .enhanced-game .deck-pile > .hana-card { width: 32px; }
   .enhanced-game .turn-banner { font-size: 8px; padding: 5px; }
   .enhanced-game .hand-assist-legend { display: none; }
+  .enhanced-game .player-bar {
+    min-height: 39px;
+    padding: 3px 7px;
+  }
+  .enhanced-game .player-avatar {
+    width: 22px;
+    height: 22px;
+    font-size: 11px;
+  }
+  .enhanced-game .player-name strong { font-size: 10px; }
+  .enhanced-game .player-name > span { margin-top: 1px; font-size: 6px; }
+  .enhanced-game .player-score { font-size: 18px; }
   .enhanced-game .game-side.game-conversation {
     right: 10px;
     top: 106px;
@@ -372,4 +400,32 @@
   .enhanced-game .player-bar { padding: 3px; gap: 1px 4px; }
   .enhanced-game .player-bar .player-score { font-size: 18px; }
   .enhanced-game .game-underbar { padding-top: 3px; }
+}
+
+/* The wide-column rules above intentionally use grid for placement. Reset the
+   identity row after those breakpoint rules so both players read identically. */
+.enhanced-game .player-bar {
+  display: flex;
+  grid-template-columns: none;
+  text-align: left;
+}
+.enhanced-game .player-bar .player-avatar,
+.enhanced-game .player-bar .player-name,
+.enhanced-game .player-bar .player-score,
+.enhanced-game .player-bar .koikoi-tag {
+  grid-column: auto;
+  grid-row: auto;
+}
+.enhanced-game .player-bar .player-name > span {
+  justify-content: flex-start;
+}
+.enhanced-game .player-bar .player-score {
+  margin-left: auto;
+  text-align: right;
+}
+.enhanced-game .own-player {
+  text-align: left;
+}
+.enhanced-game .own-player .koikoi-tag {
+  justify-self: auto;
 }

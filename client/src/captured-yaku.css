@@ -160,9 +160,9 @@
 }
 @media (max-width: 600px) {
   .captured-yaku {
-    --pile-card-width: 29px;
-    --pile-card-height: 46px;
-    margin: 5px 0;
+    --pile-card-width: 24px;
+    --pile-card-height: 36px;
+    margin: 2px 0;
   }
   .captured-yaku-owner {
     margin-bottom: 2px;
@@ -173,20 +173,21 @@
     gap: 4px;
   }
   .captured-yaku-group {
-    padding: 3px;
+    padding: 2px 1px;
   }
   .captured-yaku-group h3 {
     font-size: 9px;
   }
   .captured-yaku-scroll {
+    height: calc(var(--pile-card-height) + 7px);
     margin-bottom: 2px;
   }
   .captured-yaku-role {
-    min-height: 13px;
+    min-height: 9px;
     gap: 1px;
     padding: 0;
     font-size: 11px;
-    line-height: 13px;
+    line-height: 10px;
     letter-spacing: -0.04em;
   }
   .captured-yaku-role-mark {

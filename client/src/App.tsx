@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import Card from "./components/Card";
+import CardArtCredit from "./components/CardArtCredit";
 import Scene from "./components/Scene";
 import GameRoom from "./components/GameRoom";
 import { cards, cardImage } from "./lib/cards";
@@ -1189,6 +1190,7 @@ function Collection() {
             </div>
           ))}
       </div>
+      <CardArtCredit className="collection-art-credit" />
     </section>
   );
 }
