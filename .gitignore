@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+/target/
+/result
+/result-*
+/client/node_modules/
+/client/dist/
+/client/.vite/
+*.log
+*.tsbuildinfo
+/artifacts/
+/playwright-report/
+/test-results/
