@@ -1262,8 +1262,8 @@ html[data-motion="false"] .move-overlay * {
   border-radius: 12px;
 }
 
-/* Hyper mode is an intensity layer on the existing game table. The HTML board
-   stays responsive while Scene supplies the matching 3D table underneath. */
+/* Hyper mode decorates the existing DOM table. The GPU scene is an effects-only
+   layer, so the playable cards remain the single visual source of truth. */
 .hyper-table {
   isolation: isolate;
   border-color: rgba(239, 196, 102, .68);
@@ -1282,36 +1282,6 @@ html[data-motion="false"] .move-overlay * {
   display: block;
   width: 100%;
   height: 100%;
-}
-/* When a GPU scene is available, the DOM cards become transparent interaction
-   shells. Their hit areas, labels and assist outlines stay in the accessible
-   layer while the textured, thick cards underneath are the visual source of
-   truth. A 2D/WebGL-disabled browser keeps the ordinary DOM artwork visible. */
-.game-table.scene-rendered .field-cards .hana-card,
-.game-table.scene-rendered .your-hand .hana-card,
-.game-table.scene-rendered .opponent-hand .hana-card,
-.game-table.scene-rendered .deck-pile > .hana-card,
-.game-table.scene-rendered .drawn-card > .hana-card {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-}
-.game-table.scene-rendered .field-cards .hana-card img,
-.game-table.scene-rendered .your-hand .hana-card img,
-.game-table.scene-rendered .opponent-hand .hana-card img,
-.game-table.scene-rendered .deck-pile > .hana-card img,
-.game-table.scene-rendered .drawn-card > .hana-card img {
-  opacity: 0;
-}
-.game-table.scene-rendered .field-slot.match-target .hana-card,
-.game-table.scene-rendered .hand-slot.can-capture .hana-card,
-.game-table.scene-rendered .hand-slot.is-selected .hana-card {
-  border-color: rgba(239, 205, 119, .92);
-  box-shadow: 0 0 0 2px rgba(239, 205, 119, .72), 0 0 22px rgba(239, 205, 119, .36);
-}
-.game-table.scene-rendered .field-slot.assist-target .hana-card {
-  border-color: rgba(190, 214, 152, .8);
-  box-shadow: 0 0 0 2px rgba(190, 214, 152, .45), 0 0 18px rgba(190, 214, 152, .3);
 }
 .hyper-table::after {
   content: "";
@@ -1413,6 +1383,78 @@ html[data-motion="false"] .move-overlay * {
 @keyframes hyper-breathe { 0%, 100% { box-shadow: inset 0 0 20px rgba(244, 199, 95, .07), 0 0 16px rgba(238, 107, 50, .08); } 50% { box-shadow: inset 0 0 28px rgba(244, 199, 95, .15), 0 0 28px rgba(238, 107, 50, .18); } }
 @keyframes hyper-core { 0%, 100% { opacity: .45; transform: scale(.92); } 50% { opacity: 1; transform: scale(1.08); } }
 @keyframes hyper-rotate { to { transform: rotate(360deg); } }
+@property --hyper-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+/* A Hyper capture decorates the taken DOM cards themselves: lightning runs
+   the outline while the card burns bright, then settles back to normal.
+   A bright segment laps the outline once over the life of the flash. */
+.field-slot.hyper-capture-flash { z-index: 3; }
+.field-slot.hyper-capture-flash .hana-card,
+.captured-yaku-card.hyper-capture-flash {
+  border-color: rgba(255, 240, 180, .95);
+  animation: hyper-bolt-glow 1.5s ease-out both;
+}
+.captured-yaku-card.hyper-capture-flash { outline: 1px solid rgba(255, 236, 170, .9); outline-offset: 1px; }
+.field-slot.hyper-capture-flash .hana-card::after,
+.captured-yaku-card.hyper-capture-flash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  padding: 3px;
+  background: conic-gradient(from var(--hyper-angle, 0deg), transparent 0deg, rgba(255, 190, 90, .25) 250deg, rgba(255, 236, 170, .95) 315deg, #fff 335deg, rgba(140, 220, 255, .95) 350deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  mix-blend-mode: screen;
+  animation: hyper-bolt-lap 1.5s linear both;
+}
+@keyframes hyper-bolt-glow {
+  0% { box-shadow: 0 0 0 2px rgba(255, 240, 180, .95), 0 0 18px rgba(255, 200, 90, .9), 0 0 52px rgba(255, 140, 60, .6); filter: brightness(1.55); }
+  55% { box-shadow: 0 0 0 2px rgba(255, 236, 170, .8), 0 0 22px rgba(255, 200, 90, .7), 0 0 40px rgba(255, 140, 60, .4); filter: brightness(1.28); }
+  100% { box-shadow: 0 0 0 1px rgba(255, 220, 130, .3), 0 0 10px rgba(255, 190, 80, .22); filter: none; }
+}
+@keyframes hyper-bolt-lap {
+  from { --hyper-angle: 0deg; opacity: 1; }
+  85% { opacity: 1; }
+  to { --hyper-angle: 360deg; opacity: .15; }
+}
+.move-overlay.hyper-capture .flying-card {
+  border-color: rgba(255, 240, 180, .95);
+  box-shadow: 0 0 18px rgba(255, 200, 90, .85), 0 0 52px rgba(255, 140, 60, .5), 0 12px 24px #0008;
+  /* Keep the stage travel/stack/collect animation intact: only brighten. */
+  filter: brightness(1.25);
+}
+.move-overlay.hyper-capture .flying-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  padding: 3px;
+  background: conic-gradient(from var(--hyper-angle, 0deg), transparent 0deg, rgba(255, 190, 90, .25) 250deg, rgba(255, 236, 170, .95) 315deg, #fff 335deg, rgba(140, 220, 255, .95) 350deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  mix-blend-mode: screen;
+  animation: hyper-bolt-lap var(--duration, 450ms) linear both;
+}
+.move-overlay.hyper-capture .capture-ring {
+  width: 132px;
+  height: 132px;
+  border-color: rgba(255, 230, 150, .9);
+  box-shadow: 0 0 26px rgba(255, 200, 90, .6), 0 0 64px rgba(255, 140, 60, .35), inset 0 0 18px rgba(255, 220, 130, .4);
+}
+.hyper-table.hyper-flash-active {
+  border-color: rgba(255, 225, 150, .9);
+  box-shadow: 0 0 0 1px rgba(255, 220, 130, .35), 0 0 64px rgba(255, 170, 70, .32), inset 0 0 80px rgba(6, 34, 27, .5);
+}
 .hyper-contract-cutin { position: fixed; inset: 0; z-index: 120; pointer-events: none; display: grid; place-items: center; overflow: hidden; isolation: isolate; background: radial-gradient(ellipse at 50% 50%, rgba(91, 50, 30, .24), transparent 58%), rgba(4, 12, 9, .92); animation: hyper-cutin-in 1.8s cubic-bezier(.2,.8,.2,1) both; }
 .hyper-contract-cutin::before { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 0 28%, rgba(15, 30, 24, .82) 32%, rgba(15, 30, 24, .96) 50%, rgba(15, 30, 24, .82) 68%, transparent 72%), radial-gradient(ellipse at 50% 50%, rgba(239, 176, 66, .08), transparent 54%); border-block: 1px solid rgba(255, 204, 94, .46); box-shadow: inset 0 0 100px rgba(228, 97, 46, .16); transform: none; z-index: 0; }
 .hyper-contract-cutin-rays { position: absolute; z-index: 1; width: 90vmax; height: 90vmax; border: 1px solid rgba(244, 193, 82, .38); border-radius: 50%; box-shadow: 0 0 0 16px rgba(244, 193, 82, .05), 0 0 0 34px rgba(221, 80, 43, .04), 0 0 0 62px rgba(244, 193, 82, .03); animation: hyper-cutin-rays 1.8s ease-out both; }
@@ -1432,7 +1474,7 @@ html[data-motion="false"] .move-overlay * {
   .hyper-contract-options > div { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .hyper-table::before, .hyper-table::after, .hyper-hud.is-active, .hyper-contract-cutin, .hyper-contract-cutin-rays, .hyper-contract-cutin-seal { animation: none; }
+  .hyper-table::before, .hyper-table::after, .hyper-hud.is-active, .hyper-contract-cutin, .hyper-contract-cutin-rays, .hyper-contract-cutin-seal, .field-slot.hyper-capture-flash .hana-card, .field-slot.hyper-capture-flash .hana-card::after, .captured-yaku-card.hyper-capture-flash, .captured-yaku-card.hyper-capture-flash::after, .move-overlay.hyper-capture .flying-card, .move-overlay.hyper-capture .flying-card::after { animation: none; }
 }
 @media (max-width: 800px) {
   .game-conversation .chat-panel {

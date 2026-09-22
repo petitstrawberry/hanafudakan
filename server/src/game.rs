@@ -624,7 +624,11 @@ impl Game {
         self.captured[player].extend(taken.iter());
         if self.hyper {
             self.hyper_captured[player] = self.hyper_captured[player].saturating_add(1);
-            self.hyper_chain[player] = self.hyper_chain[player].saturating_add(1);
+            // CHAIN starts only after this player has activated a Hyper
+            // contract. A Hyper room by itself is not an active chain state.
+            if !self.hyper_contracts[player].is_empty() {
+                self.hyper_chain[player] = self.hyper_chain[player].saturating_add(1);
+            }
             let mut acquired = Vec::with_capacity(taken.len() + 1);
             acquired.push(card);
             acquired.extend(taken.iter().copied());
@@ -1250,8 +1254,18 @@ mod tests {
         hyper.hands = [vec![0], vec![]];
         hyper.field = vec![1];
         hyper.captured[0] = vec![20, 24, 36];
-        hyper.play(0, 0, None).unwrap();
-        assert_eq!(hyper.hyper_chain, [1, 0]);
+        let hyper_matches = hyper.matching(0);
+        hyper.capture_or_place(0, 0, &hyper_matches, None);
+        assert_eq!(hyper.hyper_chain, [0, 0]);
+
+        let mut contracted = fixture();
+        contracted.hyper = true;
+        contracted.hyper_contracts[0].push(hyper_contract_for_role("猪鹿蝶").unwrap());
+        contracted.hands = [vec![0], vec![]];
+        contracted.field = vec![1];
+        let contracted_matches = contracted.matching(0);
+        contracted.capture_or_place(0, 0, &contracted_matches, None);
+        assert_eq!(contracted.hyper_chain, [1, 0]);
     }
 
     #[test]

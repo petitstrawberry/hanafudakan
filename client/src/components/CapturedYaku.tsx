@@ -14,6 +14,7 @@ interface CapturedYakuProps {
   assist: boolean;
   onRoleSelect: (id: string) => void;
   selectedRoleId?: string;
+  flashIds?: number[] | null;
 }
 
 const groups: { kind: CardKind; label: string; roles: string[] }[] = [
@@ -37,6 +38,7 @@ export default function CapturedYaku({
   assist,
   onRoleSelect,
   selectedRoleId,
+  flashIds,
 }: CapturedYakuProps) {
   const { skin } = useCardSkin();
   return (
@@ -79,7 +81,7 @@ export default function CapturedYaku({
                     {pile.map((id, index) => (
                       <span
                         key={id}
-                        className="captured-yaku-card"
+                        className={`captured-yaku-card${flashIds?.includes(id) ? " hyper-capture-flash" : ""}`}
                         data-captured-card-id={id}
                         style={{ "--pile-index": index } as CSSProperties}
                         tabIndex={0}

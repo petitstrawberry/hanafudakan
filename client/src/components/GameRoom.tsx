@@ -65,6 +65,7 @@ type Flight = {
   targets: { id: number; position: Position; destination: Position }[];
   stage: "reveal" | "travel" | "stack" | "settle" | "collect";
   duration: number;
+  hyper: boolean;
 };
 type HyperCutIn = {
   name: string;
@@ -148,6 +149,8 @@ export default function GameRoom({
   const submitLock = useRef(false);
   const [flight, setFlight] = useState<Flight | null>(null);
   const [landingCard, setLandingCard] = useState<number | null>(null);
+  const [hyperFlash, setHyperFlash] = useState<{ ids: number[]; seq: number } | null>(null);
+  const hyperFlashTimer = useRef(0);
   const fieldSlotState = useRef<{ round: number; slots: FieldSlot[] }>({
     round: incoming.round || 0,
     slots: [],
@@ -252,7 +255,6 @@ export default function GameRoom({
   const opponent = own === 0 ? 1 : 0;
   const myTurn = me !== null && room.turn === me;
   const hyperMode = room.hyperEnabled || room.mode === "hyper";
-  const sceneReady = sceneBackend === "WebGPU" || sceneBackend === "WebGL2";
   const hyperState = room.hyper;
   const playing = room.phase === "play";
   const drawnChoice = room.phase === "draw_choice";
@@ -300,6 +302,7 @@ export default function GameRoom({
     return () => {
       alive.current = false;
       queue.current = [];
+      window.clearTimeout(hyperFlashTimer.current);
     };
   }, []);
   useEffect(() => {
@@ -356,6 +359,8 @@ export default function GameRoom({
       setFlight(null);
       setLandingCard(null);
       setHyperCutIn(null);
+      window.clearTimeout(hyperFlashTimer.current);
+      setHyperFlash(null);
     }
   }, [connected]);
 
@@ -465,6 +470,12 @@ export default function GameRoom({
         };
       };
       const destination = destinationFor(event.cardId);
+      // A Hyper capture means the taker already holds a Hyper contract.
+      // Merely playing in a Hyper room keeps the normal capture sound.
+      const hyperCharged =
+        hyperMode &&
+        event.captured &&
+        (before.hyper?.contracts[event.player]?.length ?? 0) > 0;
       const animate = motionEnabled();
       const timing = animate
         ? { reveal: 350, travel: 430, stack: 450, collect: 450 }
@@ -479,6 +490,7 @@ export default function GameRoom({
           destination: destinationFor(item.id),
         })),
         duration: timing.travel,
+        hyper: hyperCharged,
       };
       setAnnouncement(
         `${before.players[event.player]?.name || "プレイヤー"} · ${event.source === "hand" ? "手札から" : "山札から"} ${nameOf(event.cardId)}${event.requiresChoice ? " · 合わせる札を選択" : event.captured ? ` · ${event.targetIds.length + 1}枚獲得` : " · 場へ"}`,
@@ -514,8 +526,20 @@ export default function GameRoom({
         await sleep(settleDuration);
         if (!alive.current || epoch !== playbackEpoch.current) return;
         if (event.captured) {
-          playSound(hyperMode ? "hyper_capture" : "capture");
-          if (hyperMode && event.targetIds.length >= 2) {
+          if (hyperCharged) {
+            const flashIds = [event.cardId, ...event.targetIds];
+            const seq = event.id;
+            window.clearTimeout(hyperFlashTimer.current);
+            setHyperFlash({ ids: flashIds, seq });
+            hyperFlashTimer.current = window.setTimeout(() => {
+              if (!alive.current) return;
+              setHyperFlash((current) =>
+                current && current.seq === seq ? null : current,
+              );
+            }, 1500);
+          }
+          playSound(hyperCharged ? "hyper_capture" : "capture");
+          if (hyperCharged && event.targetIds.length >= 2) {
             await sleep(110);
             playSound("hyper_chain");
           }
@@ -610,6 +634,8 @@ export default function GameRoom({
           } else {
             setSelected(null);
             setCelebration("");
+            window.clearTimeout(hyperFlashTimer.current);
+            setHyperFlash(null);
           }
           if (!alive.current) return;
           if (epoch !== playbackEpoch.current) {
@@ -818,6 +844,7 @@ export default function GameRoom({
         playerName={room.players[index].name}
         captured={room.players[index].captured}
         statuses={yakuByPlayer[index]}
+        flashIds={hyperFlash?.ids}
         self={me === index}
         spectator={me === null}
         assist={assist}
@@ -886,7 +913,8 @@ export default function GameRoom({
         <div className="game-primary">
           <div
             ref={table}
-            className={`game-table three-dimensional-table ${sceneReady ? "scene-rendered" : ""} ${animating ? "table-in-motion" : ""} ${hyperMode ? "hyper-table" : ""}`}
+            className={`game-table three-dimensional-table ${animating ? "table-in-motion" : ""} ${hyperMode ? "hyper-table" : ""} ${hyperFlash ? "hyper-flash-active" : ""}`}
+            data-scene-backend={sceneBackend}
           >
             <Scene
               placement="table"
@@ -1060,7 +1088,7 @@ export default function GameRoom({
                           landingCard === id && !room.field.includes(id);
                         return (
                           <div
-                            className={`field-slot ${landing ? "field-landing-slot" : ""} ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""}`}
+                            className={`field-slot ${landing ? "field-landing-slot" : ""} ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""} ${hyperFlash?.ids.includes(id) ? "hyper-capture-flash" : ""}`}
                             key={id}
                             style={fieldWobble(id, index) as CSSProperties}
                             data-landing-card={landing ? id : undefined}
@@ -1494,7 +1522,8 @@ export default function GameRoom({
 
 function MoveOverlay({ flight }: { flight: Flight }) {
   const { skin } = useCardSkin();
-  const { source, target, destination, event, stage, duration } = flight;
+  const { source, target, destination, event, stage, duration, hyper } = flight;
+  const hyperCharged = hyper && event.captured;
   const position: CSSProperties = {
     "--source-x": `${source.x}px`,
     "--source-y": `${source.y}px`,
@@ -1508,7 +1537,7 @@ function MoveOverlay({ flight }: { flight: Flight }) {
   } as CSSProperties;
   return (
     <div
-      className={`move-overlay move-${stage}`}
+      className={`move-overlay move-${stage} ${hyperCharged ? "hyper-capture" : ""}`}
       aria-hidden="true"
       style={position}
     >
@@ -1621,7 +1650,9 @@ function HyperHud({
           </div>
           <div className="hyper-hud-chain-readout">
             <small>CHAIN</small>
-            <strong>x{Math.max(1, state.chain[own] || 0)}</strong>
+            <strong>
+              {state.contracts[own]?.length ? `x${state.chain[own] || 0}` : "—"}
+            </strong>
           </div>
         </div>
         <div className="hyper-hud-side hyper-hud-side-own">
