@@ -57,6 +57,12 @@
   visibility: hidden;
   pointer-events: none;
 }
+.field-empty-slot {
+  pointer-events: none;
+}
+.field-card-placeholder {
+  visibility: hidden;
+}
 .field-slot.match-target {
   animation: target-breathe 1.4s ease-in-out infinite;
   z-index: 2;

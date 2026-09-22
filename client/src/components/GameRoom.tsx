@@ -28,6 +28,7 @@ import { cards, cardImage } from "../lib/cards";
 import { playSound } from "../lib/audio";
 import { getYakuStatuses } from "../lib/yakuStatus";
 import { fitFieldLayout } from "../lib/fieldLayout";
+import { reconcileFieldSlots, type FieldSlot } from "../lib/fieldSlots";
 import type { PublicGameEvent, RoomView } from "../lib/types";
 import "../game-enhancements.css";
 import "../game-layout.css";
@@ -125,6 +126,20 @@ export default function GameRoom({
   const submitLock = useRef(false);
   const [flight, setFlight] = useState<Flight | null>(null);
   const [landingCard, setLandingCard] = useState<number | null>(null);
+  const fieldSlotState = useRef<{ round: number; slots: FieldSlot[] }>({
+    round: incoming.round || 0,
+    slots: [],
+  });
+  const currentRound = room.round || 0;
+  if (fieldSlotState.current.round !== currentRound) {
+    fieldSlotState.current = { round: currentRound, slots: [] };
+  }
+  const fieldSlots = reconcileFieldSlots(
+    fieldSlotState.current.slots,
+    room.field,
+    landingCard,
+  );
+  fieldSlotState.current.slots = fieldSlots;
   const [fieldViewport, setFieldViewport] = useState({
     width: 0,
     height: 0,
@@ -176,9 +191,7 @@ export default function GameRoom({
       window.removeEventListener("resize", measure);
     };
   }, []);
-  const fieldCardCount =
-    room.field.length +
-    Number(landingCard !== null && !room.field.includes(landingCard));
+  const fieldCardCount = fieldSlots.length;
   const fieldLayout = useMemo(
     () =>
       fitFieldLayout(
@@ -898,38 +911,45 @@ export default function GameRoom({
                         } as CSSProperties
                       }
                     >
-                      {room.field.map((id, index) => (
-                        <div
-                          className={`field-slot ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""}`}
-                          key={id}
-                          style={fieldWobble(id, index) as CSSProperties}
-                        >
-                          <Card
-                            id={id}
-                            onClick={
-                              targets.includes(id) && myTurn
-                                ? () => selectField(id)
-                                : undefined
-                            }
-                            disabled={locked}
-                          />
-                          {targets.includes(id) && myTurn && !animating && (
-                            <span className="field-target-label">
-                              {targets.length === 3 ? "まとめ取り" : "取る"}
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                      {landingCard !== null &&
-                        !room.field.includes(landingCard) && (
+                      {fieldSlots.map((id, index) => {
+                        if (id === null) {
+                          return (
+                            <div
+                              className="field-slot field-empty-slot"
+                              key={`empty-${index}`}
+                              style={fieldWobble(0, index) as CSSProperties}
+                              aria-hidden="true"
+                            >
+                              <span className="hana-card field-card-placeholder" />
+                            </div>
+                          );
+                        }
+                        const landing =
+                          landingCard === id && !room.field.includes(id);
+                        return (
                           <div
-                            className="field-slot field-landing-slot"
-                            aria-hidden="true"
-                            data-landing-card={landingCard}
+                            className={`field-slot ${landing ? "field-landing-slot" : ""} ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""}`}
+                            key={id}
+                            style={fieldWobble(id, index) as CSSProperties}
+                            data-landing-card={landing ? id : undefined}
                           >
-                            <Card id={landingCard} />
+                            <Card
+                              id={id}
+                              onClick={
+                                targets.includes(id) && myTurn
+                                  ? () => selectField(id)
+                                  : undefined
+                              }
+                              disabled={locked}
+                            />
+                            {targets.includes(id) && myTurn && !animating && (
+                              <span className="field-target-label">
+                                {targets.length === 3 ? "まとめ取り" : "取る"}
+                              </span>
+                            )}
                           </div>
-                        )}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
