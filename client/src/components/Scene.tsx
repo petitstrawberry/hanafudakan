@@ -1,26 +1,48 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three/webgpu';
+import { WebGLRenderer } from 'three';
+import type { CardSkin } from '../lib/cardSkin';
 
 export interface SceneProps {
   intensity?: number;
   active?: boolean;
+  cardSkin?: CardSkin;
+  placement?: 'ambient' | 'table';
+  game?: TableSceneState;
   onReady?: (backend: string) => void;
 }
+
+export type TableSceneState = {
+  hyper: boolean;
+  field: number[];
+  hand: number[];
+  opponentHandCount: number;
+  deckCount: number;
+  drawnCard: number | null;
+  phase: string;
+  turn: number;
+  eventId: number;
+  eventCaptured: boolean;
+  eventCardId: number | null;
+  eventTargetIds: number[];
+  eventStage: 'reveal' | 'travel' | 'stack' | 'settle' | 'collect' | null;
+  effectId: number;
+};
 
 type Backend = 'WebGPU' | 'WebGL2' | '2D';
 
 /** Decorative GPU scenery. Gameplay never depends on the renderer being available. */
-export default function Scene({ intensity = 1, active = true, onReady }: SceneProps) {
+export default function Scene({ intensity = 1, active = true, cardSkin = 'recolored', placement = 'ambient', game, onReady }: SceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const settingsRef = useRef({ intensity, active });
+  const settingsRef = useRef({ intensity, active, cardSkin, placement, game });
   const readyRef = useRef(onReady);
   const invalidateRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
-    settingsRef.current = { intensity, active };
+    settingsRef.current = { intensity, active, cardSkin, placement, game };
     readyRef.current = onReady;
     invalidateRef.current();
-  }, [intensity, active, onReady]);
+  }, [intensity, active, cardSkin, placement, game, onReady]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -31,7 +53,7 @@ export default function Scene({ intensity = 1, active = true, onReady }: ScenePr
     let frame = 0;
     let previousTime = 0;
     let elapsed = 0;
-    let renderer: THREE.WebGPURenderer | undefined;
+    let renderer: THREE.WebGPURenderer | WebGLRenderer | undefined;
     let resizeObserver: ResizeObserver | undefined;
     const geometries = new Set<THREE.BufferGeometry>();
     const materials = new Set<THREE.Material>();
@@ -146,19 +168,32 @@ export default function Scene({ intensity = 1, active = true, onReady }: ScenePr
         readyRef.current?.(backend);
       }
     };
-    const releaseRenderer = (target: THREE.WebGPURenderer | undefined) => {
+    let sceneReleased = false;
+    const releaseScene = () => {
+      if (sceneReleased) return;
+      sceneReleased = true;
+      // Material disposal notifies WebGPU's render-object/node caches. Keep
+      // those caches alive until all scene resources have been released.
+      dust.dispose();
+      geometries.forEach((resource) => resource.dispose());
+      materials.forEach((resource) => resource.dispose());
+      textures.forEach((resource) => resource.dispose());
+      scene.clear();
+    };
+    const releaseRenderer = (target: THREE.WebGPURenderer | WebGLRenderer | undefined) => {
       if (!target) return;
       target.domElement.remove();
       // Three's dispose() calls async setAnimationLoop() internally. On a failed
       // init that would retry the rejected init and leak an unhandled rejection.
       // Candidates are only released after their init promise has settled.
-      if (!target.hasInitialized()) return;
+      if ('hasInitialized' in target && !target.hasInitialized()) return;
       try { void Promise.resolve(target.dispose()).catch(() => undefined); } catch { /* Failed initialization. */ }
     };
     const fallback = () => {
       initialized = false;
       window.cancelAnimationFrame(frame);
       frame = 0;
+      releaseScene();
       releaseRenderer(renderer);
       renderer = undefined;
       announce('2D');
@@ -171,6 +206,8 @@ export default function Scene({ intensity = 1, active = true, onReady }: ScenePr
       previousTime = time;
       if (moving) elapsed += delta;
       const strength = Math.max(0, Math.min(2, settingsRef.current.intensity));
+      // The scene is ambient only: drifting dust, petals and distant orbits.
+      // Hyper captures are decorated on the DOM cards themselves.
       const motion = elapsed * 0.26;
 
       for (let i = 0; i < dust.count; i += 1) {
@@ -199,7 +236,13 @@ export default function Scene({ intensity = 1, active = true, onReady }: ScenePr
       petalMaterials.forEach((petalMaterial) => { petalMaterial.opacity = 0.25 * strength; });
       orbitGroup.rotation.z = -0.35 + Math.sin(motion * 0.09) * 0.045;
       orbitMaterials.forEach((ringMaterial, i) => { ringMaterial.opacity = (0.13 - i * 0.009) * strength; });
-      try { renderer.render(scene, camera); } catch { fallback(); return; }
+      try {
+        renderer.render(scene, camera);
+      } catch (error) {
+        console.error('[hanafudakan] ambient scene render failed', error);
+        fallback();
+        return;
+      }
       if (moving) frame = window.requestAnimationFrame(draw);
     };
     const invalidate = () => {
@@ -229,7 +272,7 @@ export default function Scene({ intensity = 1, active = true, onReady }: ScenePr
     document.addEventListener('visibilitychange', onVisibility);
 
     const initialize = async () => {
-      let candidate: THREE.WebGPURenderer | undefined;
+      let candidate: THREE.WebGPURenderer | WebGLRenderer | undefined;
       let hasWebGPU = false;
       try {
         hasWebGPU = Boolean(await navigator.gpu?.requestAdapter());
@@ -238,9 +281,11 @@ export default function Scene({ intensity = 1, active = true, onReady }: ScenePr
 
       if (hasWebGPU) {
         try {
-          candidate = new THREE.WebGPURenderer({ antialias: true, alpha: true });
-          await candidate.init();
-        } catch {
+          const webgpu = new THREE.WebGPURenderer({ antialias: true, alpha: true });
+          await webgpu.init();
+          candidate = webgpu;
+        } catch (error) {
+          console.warn('[hanafudakan] WebGPU init failed, trying WebGL2', error);
           releaseRenderer(candidate);
           candidate = undefined;
         }
@@ -258,8 +303,7 @@ export default function Scene({ intensity = 1, active = true, onReady }: ScenePr
           return;
         }
         try {
-          candidate = new THREE.WebGPURenderer({ canvas, antialias: true, alpha: true, forceWebGL: true });
-          await candidate.init();
+          candidate = new WebGLRenderer({ canvas, antialias: true, alpha: true });
         } catch {
           releaseRenderer(candidate);
           announce('2D');
@@ -270,14 +314,16 @@ export default function Scene({ intensity = 1, active = true, onReady }: ScenePr
       renderer = candidate;
       renderer.setClearColor(0x05100c, 0);
       renderer.domElement.setAttribute('aria-hidden', 'true');
-      renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;pointer-events:none;';
+      renderer.domElement.style.cssText = 'position:absolute;inset:0;z-index:1;display:block;width:100%;height:100%;pointer-events:none;';
       host.prepend(renderer.domElement);
       initialized = true;
       resize();
       resizeObserver = new ResizeObserver(resize);
       resizeObserver.observe(host);
-      const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean };
-      announce(backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2');
+      const backend = 'backend' in renderer
+        ? renderer.backend as unknown as { isWebGPUBackend?: boolean }
+        : undefined;
+      announce(backend?.isWebGPUBackend ? 'WebGPU' : 'WebGL2');
       invalidate();
     };
     void initialize().catch(fallback);
@@ -290,24 +336,20 @@ export default function Scene({ intensity = 1, active = true, onReady }: ScenePr
       resizeObserver?.disconnect();
       reducedMotion.removeEventListener('change', onMotionPreference);
       document.removeEventListener('visibilitychange', onVisibility);
+      releaseScene();
       releaseRenderer(renderer);
-      dust.dispose();
-      geometries.forEach((resource) => resource.dispose());
-      materials.forEach((resource) => resource.dispose());
-      textures.forEach((resource) => resource.dispose());
-      scene.clear();
     };
   }, []);
 
   return (
     <div
       ref={hostRef}
-      className="ambient-scene"
+      className={`ambient-scene ${placement === 'table' ? 'table-scene' : ''}`}
       aria-hidden="true"
-      style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none',
+      style={{ position: placement === 'table' ? 'absolute' : 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 0,
         background: 'radial-gradient(ellipse at 18% 35%, #102b21 0%, transparent 58%), radial-gradient(ellipse at 87% 74%, #211f12 0%, transparent 49%), #07110e' }}
     >
-      <div style={{ position: 'absolute', inset: 0,
+      <div style={{ position: 'absolute', inset: 0, zIndex: 0,
         background: 'radial-gradient(ellipse at 50% 44%, transparent 25%, rgba(1,7,5,.5) 100%)' }} />
     </div>
   );

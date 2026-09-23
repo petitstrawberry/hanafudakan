@@ -13,6 +13,7 @@ import {
   LockKeyhole,
   Maximize,
   Music2,
+  Palette,
   Plus,
   RefreshCw,
   Search,
@@ -31,6 +32,7 @@ import CardArtCredit from "./components/CardArtCredit";
 import Scene from "./components/Scene";
 import GameRoom from "./components/GameRoom";
 import { cards, cardImage } from "./lib/cards";
+import { CARD_SKIN_OPTIONS, useCardSkin } from "./lib/cardSkin";
 import { playSound, setMuted } from "./lib/audio";
 import { api, ApiError, readSession, saveSession } from "./lib/api";
 import type { Mode, RoomSummary, RoomView, Session } from "./lib/types";
@@ -160,6 +162,7 @@ function ModalShell({
   );
 }
 export default function App() {
+  const { skin: cardSkin } = useCardSkin();
   const [session, setSession] = useState<Session | null>(readSession);
   const [page, setPage] = useState<Page>("lobby");
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
@@ -270,6 +273,7 @@ export default function App() {
     mode: Mode,
     rounds: number,
     password = "",
+    hyper = false,
   ) => {
     setBusy(true);
     try {
@@ -277,7 +281,7 @@ export default function App() {
       const result = await api<{ roomId: string }>("/rooms", {
         method: "POST",
         token: s.token,
-        body: { name, mode, rounds, password },
+        body: { name, mode, rounds, password, hyper },
       });
       openRoom(result.roomId);
       playSound("deal");
@@ -406,11 +410,14 @@ export default function App() {
   const closeModal = useCallback(() => setModal(null), []);
   return (
     <div className="app-shell">
-      <Scene
-        active={motion}
-        intensity={roomId ? 0.5 : 1}
-        onReady={setBackend}
-      />
+      {!roomId && (
+        <Scene
+          active={motion}
+          cardSkin={cardSkin}
+          intensity={1}
+          onReady={setBackend}
+        />
+      )}
       <aside className="sidebar">
         <a
           className="brand"
@@ -556,6 +563,7 @@ export default function App() {
                 send={send}
                 leave={leave}
                 copyInvite={copyInvite}
+                onBackend={setBackend}
               />
             ) : (
               <div className="connecting">
@@ -625,13 +633,13 @@ export default function App() {
                   <span className="art-spark spark-one">✧</span>
                   <span className="art-spark spark-two">✦</span>
                   <div className="hero-card hero-card-left">
-                    <img src={cardImage(8)} alt="桜に幕" />
+                    <img src={cardImage(8, cardSkin)} alt="桜に幕" />
                   </div>
                   <div className="hero-card hero-card-right">
-                    <img src={cardImage(28)} alt="芒に月" />
+                    <img src={cardImage(28, cardSkin)} alt="芒に月" />
                   </div>
                   <div className="hero-card hero-card-front">
-                    <img src={cardImage(0)} alt="松に鶴" />
+                    <img src={cardImage(0, cardSkin)} alt="松に鶴" />
                   </div>
                   <div className="art-seal">
                     こい
@@ -743,7 +751,9 @@ export default function App() {
                             <span
                               className={`room-emblem ${r.locked ? "locked" : ""}`}
                             >
-                              {r.mode === "cpu" ? (
+                              {r.hyperEnabled ? (
+                                <Sparkles size={23} />
+                              ) : r.mode === "cpu" ? (
                                 <Cpu size={23} />
                               ) : r.locked ? (
                                 <LockKeyhole size={22} />
@@ -759,7 +769,11 @@ export default function App() {
                               <p>
                                 {r.hostName}
                                 <span>·</span> {r.rounds}回戦 <span>·</span>{" "}
-                                {r.mode === "cpu" ? "CPU対戦" : "こいこい"}
+                                {r.hyperEnabled
+                                  ? `ハイパー花札 · ${r.mode === "cpu" ? "CPU" : "対人"}`
+                                  : r.mode === "cpu"
+                                    ? "CPU対戦"
+                                    : "こいこい"}
                               </p>
                             </div>
                             <div className="room-status">
@@ -821,9 +835,9 @@ export default function App() {
                       自分のペースで、こいこいを。
                     </p>
                     <div className="mini-card-fan">
-                      <img src={cardImage(36)} alt="紅葉に鹿" />
-                      <img src={cardImage(24)} alt="萩に猪" />
-                      <img src={cardImage(20)} alt="牡丹に蝶" />
+                      <img src={cardImage(36, cardSkin)} alt="紅葉に鹿" />
+                      <img src={cardImage(24, cardSkin)} alt="萩に猪" />
+                      <img src={cardImage(20, cardSkin)} alt="牡丹に蝶" />
                     </div>
                     <button
                       className="button practice-button"
@@ -1035,9 +1049,11 @@ function CreateForm({
     mode: Mode,
     rounds: number,
     password: string,
+    hyper: boolean,
   ) => Promise<void>;
 }) {
   const [mode, setMode] = useState<Mode>("pvp");
+  const [hyper, setHyper] = useState(false);
   const [locked, setLocked] = useState(false);
   return (
     <form
@@ -1049,6 +1065,7 @@ function CreateForm({
           mode,
           Number(d.get("rounds")),
           locked ? String(d.get("password")) : "",
+          hyper,
         );
       }}
     >
@@ -1073,6 +1090,19 @@ function CreateForm({
           <small>ひとりで気軽に練習</small>
         </button>
       </div>
+      <button
+        type="button"
+        className={`hyper-toggle ${hyper ? "enabled" : ""}`}
+        aria-pressed={hyper}
+        onClick={() => setHyper((value) => !value)}
+      >
+        <span className="hyper-toggle-icon"><Sparkles size={19} /></span>
+        <span>
+          <strong>ハイパー花札</strong>
+          <small>{hyper ? "ON · 役を契約に変えて派手に連鎖" : "OFF · 通常のこいこい"}</small>
+        </span>
+        <b>{hyper ? "ON" : "OFF"}</b>
+      </button>
       <label className="field-label">
         部屋の名前
         <input
@@ -1296,6 +1326,7 @@ function Settings({
   session: Session | null;
   editName: () => void;
 }) {
+  const { skin, setSkin } = useCardSkin();
   return (
     <section className="inner-page settings-page">
       <div className="eyebrow">MAKE YOURSELF AT HOME</div>
@@ -1347,6 +1378,27 @@ function Settings({
             <p>WebGPUを優先し、環境に合わせて描画方式を選択します。</p>
           </div>
           <span className="status-pill waiting">{backend}</span>
+        </div>
+        <div className="setting-row setting-row-skin">
+          <Palette />
+          <div>
+            <h3>札の絵柄</h3>
+            <p>リカラー版と原色版を、いつでも切り替えられます。</p>
+          </div>
+          <label className="setting-select-label">
+            <span className="sr-only">札の絵柄</span>
+            <select
+              aria-label="札の絵柄"
+              value={skin}
+              onChange={(event) => setSkin(event.target.value as typeof skin)}
+            >
+              {CARD_SKIN_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="setting-row">
           <Users />

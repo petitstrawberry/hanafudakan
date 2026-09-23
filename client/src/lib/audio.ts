@@ -1,4 +1,4 @@
-export type SoundKind = 'click' | 'deal' | 'capture' | 'win' | 'koikoi';
+export type SoundKind = 'click' | 'deal' | 'capture' | 'hyper_capture' | 'hyper_chain' | 'hp_hit' | 'ko_blast' | 'win' | 'koikoi' | 'hyper';
 
 let context: AudioContext | undefined;
 let muted = false;
@@ -16,7 +16,7 @@ export function setVolume(value: number): void {
 }
 
 function getAudio(): AudioContext | undefined {
-  // Called by playSound only from a player's interaction; autoplay stays silent.
+  // Effects and music share one context; autoplay waits for user activation.
   if (typeof window === 'undefined' || !window.AudioContext) return undefined;
   try {
     if (!context) {
@@ -33,6 +33,12 @@ function getAudio(): AudioContext | undefined {
     if (context.state === 'suspended') void context.resume().catch(() => undefined);
     return context;
   } catch { return undefined; }
+}
+
+/** Music shares the effects master, so the existing sound toggle mutes both. */
+export function getMusicOutput(): { audio: AudioContext; output: GainNode } | undefined {
+  const audio = getAudio();
+  return audio && master ? { audio, output: master } : undefined;
 }
 
 function tone(audio: AudioContext, frequency: number, at: number, duration: number, gain: number, type: OscillatorType = 'sine'): void {
@@ -102,6 +108,39 @@ export function playSound(kind: SoundKind): void {
       brush(audio, at, 0.08);
       [440, 587.33, 880].forEach((f, i) => pluck(audio, f, at + i * 0.075, 0.15));
       break;
+    case 'hyper_capture':
+      // A short impact followed by a rising metallic arpeggio makes every
+      // Hyper stack feel like a deliberate battle beat rather than a normal
+      // capture with a color filter.
+      drum(audio, at, 0.72);
+      drum(audio, at + 0.12, 0.44);
+      brush(audio, at + 0.04, 0.2);
+      [220, 293.66, 392, 523.25, 783.99, 1046.5].forEach((f, i) => {
+        pluck(audio, f, at + i * 0.045, 0.22);
+        tone(audio, f * 2, at + i * 0.045, 0.18, 0.045, 'sawtooth');
+      });
+      tone(audio, 1568, at + 0.34, 0.9, 0.13, 'triangle');
+      break;
+    case 'hyper_chain':
+      [261.63, 329.63, 440, 659.25, 880, 1318.51].forEach((f, i) => {
+        pluck(audio, f, at + i * 0.06, 0.17);
+        tone(audio, f * 1.5, at + i * 0.06, 0.25, 0.025, 'square');
+      });
+      tone(audio, 1760, at + 0.38, 1.1, 0.1, 'triangle');
+      break;
+    case 'hp_hit':
+      drum(audio, at, 0.8);
+      brush(audio, at, 0.16);
+      tone(audio, 98, at, 0.2, 0.18, 'sawtooth');
+      tone(audio, 784, at + 0.015, 0.1, 0.08, 'triangle');
+      break;
+    case 'ko_blast':
+      drum(audio, at, 1);
+      drum(audio, at + 0.16, 0.7);
+      brush(audio, at, 0.5);
+      [55, 82.41, 110].forEach(f => tone(audio, f, at, 0.85, 0.12, 'sawtooth'));
+      [293.66, 440, 587.33].forEach(f => tone(audio, f, at + 0.25, 1.5, 0.1, 'triangle'));
+      break;
     case 'koikoi':
       drum(audio, at);
       [293.66, 349.23, 440, 587.33].forEach((f, i) => pluck(audio, f, at + i * 0.085, 0.23));
@@ -112,6 +151,15 @@ export function playSound(kind: SoundKind): void {
       drum(audio, at + 0.28, 0.32);
       [293.66, 349.23, 440, 587.33, 698.46, 880, 1174.66].forEach((f, i) => pluck(audio, f, at + i * 0.105, 0.2));
       [587.33, 880, 1174.66].forEach((f) => tone(audio, f, at + 0.8, 1.9, 0.08));
+      break;
+    case 'hyper':
+      drum(audio, at, 0.55);
+      drum(audio, at + 0.18, 0.38);
+      [196, 246.94, 329.63, 493.88, 659.25, 987.77, 1318.51].forEach((f, i) => {
+        pluck(audio, f, at + i * 0.055, 0.2);
+        tone(audio, f * 2, at + i * 0.055, 0.24, 0.03, 'sawtooth');
+      });
+      tone(audio, 1568, at + 0.45, 1.2, 0.12, 'triangle');
       break;
   }
 }

@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { cardImage, cards, type CardKind } from "../lib/cards";
+import { useCardSkin } from "../lib/cardSkin";
 import type { YakuStatus } from "../lib/yakuStatus";
 import "../captured-yaku.css";
 
@@ -13,6 +14,7 @@ interface CapturedYakuProps {
   assist: boolean;
   onRoleSelect: (id: string) => void;
   selectedRoleId?: string;
+  flashIds?: number[] | null;
 }
 
 const groups: { kind: CardKind; label: string; roles: string[] }[] = [
@@ -36,7 +38,9 @@ export default function CapturedYaku({
   assist,
   onRoleSelect,
   selectedRoleId,
+  flashIds,
 }: CapturedYakuProps) {
+  const { skin } = useCardSkin();
   return (
     <section
       className={`captured-yaku ${self ? "captured-yaku-self" : "captured-yaku-opponent"}`}
@@ -77,7 +81,7 @@ export default function CapturedYaku({
                     {pile.map((id, index) => (
                       <span
                         key={id}
-                        className="captured-yaku-card"
+                        className={`captured-yaku-card${flashIds?.includes(id) ? " hyper-capture-flash" : ""}`}
                         data-captured-card-id={id}
                         style={{ "--pile-index": index } as CSSProperties}
                         tabIndex={0}
@@ -86,7 +90,7 @@ export default function CapturedYaku({
                         title={`${cards[id].month}月・${cards[id].name}`}
                       >
                         <img
-                          src={cardImage(id)}
+                          src={cardImage(id, skin)}
                           alt={`${cards[id].month}月・${cards[id].name}`}
                           draggable={false}
                         />

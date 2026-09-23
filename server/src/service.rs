@@ -31,7 +31,7 @@ use tower_http::{
 };
 use uuid::Uuid;
 
-use crate::game::{Game, Phase, PublicGameEvent, Yaku};
+use crate::game::{Game, HyperState, Phase, PublicGameEvent, Yaku};
 
 const SESSION_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const ROOM_TTL: Duration = Duration::from_secs(6 * 60 * 60);
@@ -116,6 +116,7 @@ struct Room {
     host_id: String,
     password: Option<String>,
     mode: Mode,
+    hyper_enabled: bool,
     rounds: u8,
     players: Vec<Player>,
     spectators: HashSet<String>,
@@ -132,6 +133,7 @@ struct Room {
 enum Mode {
     Pvp,
     Cpu,
+    Hyper,
 }
 #[derive(Clone, Serialize)]
 struct ChatMessage {
@@ -158,6 +160,7 @@ struct RoomSummary {
     name: String,
     locked: bool,
     mode: Mode,
+    hyper_enabled: bool,
     rounds: u8,
     players: usize,
     spectators: usize,
@@ -167,10 +170,13 @@ struct RoomSummary {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RoomView {
+    board_revision: u32,
+    hand_targets: Vec<crate::game::HandTargets>,
     id: String,
     name: String,
     host_id: String,
     mode: Mode,
+    hyper_enabled: bool,
     rounds: u8,
     round: u8,
     status: &'static str,
@@ -192,11 +198,16 @@ struct RoomView {
     log: Vec<String>,
     legal_targets: Vec<u8>,
     events: Vec<PublicGameEvent>,
+    hyper: Option<HyperState>,
     spectators: usize,
 }
 impl Room {
     fn start_game(&mut self) {
-        let mut game = Game::new(self.rounds);
+        let mut game = if self.hyper_enabled || self.mode == Mode::Hyper {
+            Game::new_hyper(self.rounds)
+        } else {
+            Game::new(self.rounds)
+        };
         game.set_event_sequence(self.event_sequence);
         self.game = Some(game);
     }
@@ -220,6 +231,7 @@ impl Room {
             name: self.name.clone(),
             locked: self.password.is_some(),
             mode: self.mode,
+            hyper_enabled: self.hyper_enabled,
             rounds: self.rounds,
             players: self
                 .players
@@ -257,10 +269,13 @@ impl Room {
             })
             .collect();
         RoomView {
+            board_revision: game.map_or(0, |g| g.board_revision),
+            hand_targets: game.zip(mine).map_or_else(Vec::new, |(g, player)| g.hand_targets(player)),
             id: self.id.clone(),
             name: self.name.clone(),
             host_id: self.host_id.clone(),
             mode: self.mode,
+            hyper_enabled: self.hyper_enabled,
             rounds: self.rounds,
             round: game.map_or(0, |g| g.round),
             status: self.status(),
@@ -291,6 +306,7 @@ impl Room {
             log: game.map_or_else(Vec::new, |g| g.log.clone()),
             legal_targets: game.map_or_else(Vec::new, Game::legal_targets),
             events: game.map_or_else(Vec::new, |g| g.events.clone()),
+            hyper: game.and_then(|g| g.hyper_state(mine)),
             spectators: self.spectators.len(),
         }
     }
@@ -553,6 +569,8 @@ struct RoomRequest {
     password: Option<String>,
     rounds: u8,
     mode: Mode,
+    #[serde(default)]
+    hyper: bool,
 }
 async fn hash_password(state: &AppState, password: String) -> Result<String, ApiError> {
     let permit = state
@@ -630,10 +648,14 @@ async fn create_room(
         name: session.name.clone(),
         is_cpu: false,
     }];
-    if body.mode == Mode::Cpu {
+    if matches!(body.mode, Mode::Cpu | Mode::Hyper) {
         players.push(Player {
             id: format!("cpu-{id}"),
-            name: "花影 AI".into(),
+            name: if body.mode == Mode::Hyper {
+                "花影 Hyper AI".into()
+            } else {
+                "花影 AI".into()
+            },
             is_cpu: true,
         });
     }
@@ -643,6 +665,7 @@ async fn create_room(
         host_id: session.player_id,
         password,
         mode: body.mode,
+        hyper_enabled: body.hyper || body.mode == Mode::Hyper,
         rounds: body.rounds,
         players,
         spectators: HashSet::new(),
@@ -814,6 +837,9 @@ enum Command {
     Decision {
         koikoi: bool,
     },
+    Hyper {
+        role: String,
+    },
     Chat {
         text: String,
     },
@@ -938,6 +964,12 @@ fn apply_command(room: &mut Room, session: &Session, command: Command) -> Result
                         .as_mut()
                         .ok_or("対局が始まっていません")?
                         .decision(index, koikoi)?;
+                }
+                Command::Hyper { role } => {
+                    room.game
+                        .as_mut()
+                        .ok_or("対局が始まっていません")?
+                        .hyper(index, role)?;
                 }
                 _ => unreachable!("message and leave handled above"),
             }
@@ -1759,5 +1791,50 @@ mod tests {
         apply_command(room, &session, Command::Start).unwrap();
         assert!(room.next_cpu >= before + CPU_THINK_TIME);
         assert_eq!(CPU_THINK_TIME, Duration::from_millis(1500));
+    }
+
+    #[tokio::test]
+    async fn hyper_command_broadcasts_atomic_redeal_and_public_hp_without_private_cards() {
+        let state = AppState::default();
+        let router = app(state.clone(), "/nonexistent");
+        let token = session(&router, "契約者").await;
+        let (_, created) = request(router, "POST", "/api/rooms", Some(&token),
+            json!({"name":"Hyper reset","rounds":3,"mode":"cpu","hyper":true})).await;
+        let mut store = state.inner.lock().unwrap();
+        let session = store.sessions[&token].clone();
+        let room = store.rooms.get_mut(created["roomId"].as_str().unwrap()).unwrap();
+        let (tx, mut rx) = mpsc::channel(32);
+        room.connections.insert("test".into(), Connection { player_id: session.player_id.clone(), tx });
+        apply_command(room, &session, Command::Start).unwrap();
+        let game = room.game.as_mut().unwrap();
+        game.phase = Phase::Decision;
+        game.turn = 0;
+        game.hands = [vec![], vec![]];
+        game.field.clear();
+        game.captured = [vec![0, 8, 28], vec![1, 5, 9]];
+        game.deck = (0..48).filter(|c| ![0, 8, 28, 1, 5, 9].contains(c)).collect();
+        let revision = game.board_revision;
+        apply_command(room, &session, Command::Hyper { role: "三光".into() }).unwrap();
+        room.broadcast();
+        let message = rx.try_recv().unwrap();
+        let view = &message["room"];
+        assert_eq!(view["boardRevision"], revision + 1);
+        assert_eq!(view["deckCount"], 24);
+        assert_eq!(view["hand"].as_array().unwrap().len(), 8);
+        assert_eq!(view["field"].as_array().unwrap().len(), 8);
+        assert_eq!(view["hyper"]["stake"], json!([5, 0]));
+        assert_eq!(view["hyper"]["hp"], json!([18, 18]));
+        assert_eq!(view["hyper"]["multiplier"], json!([175, 100]));
+        assert_eq!(view["turn"], 1);
+        assert_eq!(view["events"], json!([]));
+        for player in view["players"].as_array().unwrap() {
+            assert_eq!(player["captured"], json!([]));
+            assert!(player.get("hand").is_none());
+        }
+        assert!(view.get("deck").is_none());
+        let spectator = serde_json::to_value(room.view("spectator")).unwrap();
+        assert_eq!(spectator["hand"], json!([]));
+        assert_eq!(spectator["handTargets"], json!([]));
+        assert_eq!(spectator["hyper"]["options"], json!([]));
     }
 }

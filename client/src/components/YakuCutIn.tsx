@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { cardImage } from "../lib/cards";
+import { useCardSkin } from "../lib/cardSkin";
 import {
   yakuAnnouncementDuration,
   type YakuAnnouncement,
@@ -20,6 +21,7 @@ export function YakuCutIn({
   sequenceKey,
   reducedMotion,
 }: YakuCutInProps) {
+  const { skin } = useCardSkin();
   const { name, points, delta, cardIds, theme, kind } = announcement;
   const increment = kind === "increment";
   const duration = yakuAnnouncementDuration(announcement, reducedMotion);
@@ -77,7 +79,7 @@ export function YakuCutIn({
                 <img
                   className="yaku-cut-in-card"
                   key={id}
-                  src={cardImage(id)}
+                  src={cardImage(id, skin)}
                   alt=""
                   draggable="false"
                   style={

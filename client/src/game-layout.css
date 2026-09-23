@@ -1,5 +1,9 @@
 /* Keep the cards central. Wide viewports place each player's captures beside
    the field; portrait viewports preserve the opponent / field / self order. */
+.hyper-table .decision-panel {
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+}
 .workspace:has(.enhanced-game) > .topbar {
   height: 54px;
 }
@@ -85,9 +89,7 @@
       "opponent-player opponent-hand own-player"
       "rival field self"
       "rival turn self"
-      "rival selection self"
-      "rival hand self"
-      "rival legend self";
+      "rival hand self";
     column-gap: clamp(10px, 1.4vw, 24px);
     row-gap: 3px;
     padding: 17px;
@@ -98,9 +100,7 @@
   .enhanced-game .opponent-hand { grid-area: opponent-hand; }
   .enhanced-game .table-middle { grid-area: field; }
   .enhanced-game .turn-banner { grid-area: turn; }
-  .enhanced-game .selection-tray { grid-area: selection; }
   .enhanced-game .your-hand { grid-area: hand; }
-  .enhanced-game .hand-assist-legend { grid-area: legend; }
   .enhanced-game .capture-zone-own { grid-area: self; }
   .enhanced-game .capture-zone-opponent { grid-area: rival; }
   .enhanced-game .capture-zone {
@@ -220,9 +220,6 @@
     width: 54px;
     max-width: calc((100% - 42px) / 8);
   }
-  .enhanced-game .hand-assist-legend {
-    margin: 0;
-  }
   .enhanced-game .selection-tray {
     margin: 3px 0;
   }
@@ -261,9 +258,6 @@
     height: auto;
     min-height: 80px;
     padding: 8px 0 15px;
-  }
-  .enhanced-game .hand-assist-legend {
-    margin: 0 0 4px;
   }
 }
 
@@ -327,7 +321,6 @@
   .enhanced-game .field-cards .hana-card { width: 43px; }
   .enhanced-game .deck-pile > .hana-card { width: 32px; }
   .enhanced-game .turn-banner { font-size: 8px; padding: 5px; }
-  .enhanced-game .hand-assist-legend { display: none; }
   .enhanced-game .player-bar {
     min-height: 39px;
     padding: 3px 7px;
@@ -371,7 +364,6 @@
   .enhanced-game .your-hand.with-selection { min-height: 83px; padding: 6px 0 12px; gap: 5px; }
   .enhanced-game .hand-slot { width: 44px; max-width: calc((100% - 35px) / 8); }
   .enhanced-game .turn-banner { padding: 5px; font-size: 8px; }
-  .enhanced-game .hand-assist-legend { display: none; }
   .enhanced-game .captured-yaku { --pile-card-width: 33px; --pile-card-height: 52px; --pile-card-overlap: -18px; }
   .enhanced-game .captured-yaku-scroll { height: 61px; }
   .enhanced-game .captured-yaku-role { min-height: 14px; line-height: 13px; }
@@ -428,4 +420,256 @@
 }
 .enhanced-game .own-player .koikoi-tag {
   justify-self: auto;
+}
+
+/* Hyper state belongs to each identity row, leaving the field unobstructed. */
+.enhanced-game .player-bar.has-hyper { flex-wrap: wrap; gap: 3px 6px; max-width: none; }
+.enhanced-game .player-bar.has-hyper .player-name { min-width: 0; }
+.enhanced-game .player-bar.has-hyper .player-name strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-multiplier { color: #ffdc89; font-size: 14px; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px #e3964544; }
+.player-hyper-status { flex: 0 0 100%; min-width: 0; border-top: 1px solid #c1a86b33; padding-top: 3px; }
+.player-hyper-line { display: flex; align-items: center; gap: 6px; min-height: 16px; font-size: 8px; color: #b6bca0; }
+.player-chain { white-space: nowrap; color: #d9bc77; font-variant-numeric: tabular-nums; }
+.player-chain b { font-size: 12px; color: #ffe6a3; }
+.player-chain.is-fever { text-shadow: 0 0 10px #f29b48; animation: hyper-chain-impact .45s ease-out; }
+.player-hyper-bank { white-space: nowrap; font-size: 8px; }
+.player-hyper-bank b { color: #e9d5aa; }
+.player-contract-details { margin-left: auto; min-width: 0; color: #e6c984; }
+.player-contract-details summary { cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 120px; font-size: 9px; }
+.player-contract-popover { position: absolute; top: calc(100% + 6px); left: 0; width: min(290px, calc(100vw - 48px)); max-height: 260px; overflow-y: auto; padding: 12px; border: 1px solid #caa76c88; border-radius: 6px; background: #12231afc; box-shadow: 0 12px 32px #0009; text-align: left; font-size: 11px; }
+.player-contract-popover > strong { color: #f7d189; }
+.player-contract-popover p { font-size: 10px; line-height: 1.7; margin: 7px 0 0; color: #c6d2b7; }
+.own-player .player-contract-popover { left: auto; right: 0; }
+.game-table > .player-bar:has(details[open]) { z-index: 20; }
+.player-hyper-status .hyper-hp { gap: 5px; height: 16px; font-size: 8px; }
+.player-hyper-status .hyper-hp meter { height: 10px; }
+.player-hyper-status .hyper-hp b { min-width: 30px; font-size: 10px; }
+@media (max-width: 699px), (max-aspect-ratio: 6/5) {
+  .own-player .player-contract-popover { top: auto; bottom: calc(100% + 6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .player-chain.is-fever { animation: none; }
+}
+
+/* Allocate the viewport once. Game state only changes content within these
+   tracks, never the height of the table or the position of another track. */
+html:has(.enhanced-game),
+body:has(.enhanced-game) {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+.workspace:has(.enhanced-game) {
+  display: flex;
+  flex-direction: column;
+}
+.workspace:has(.enhanced-game) > .topbar { flex-shrink: 0; }
+.workspace:has(.enhanced-game) > main {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  margin-block: 0;
+  display: flex;
+}
+.enhanced-game.game-page {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.enhanced-game .game-heading { flex: none; }
+.enhanced-game .game-heading h1 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.enhanced-game .game-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.enhanced-game .game-primary {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.enhanced-game .game-underbar { flex: 0 0 24px; padding: 3px 0; }
+.enhanced-game .game-table {
+  flex: 1;
+  min-height: 0;
+  container-type: size;
+}
+.enhanced-game .game-table:not(:has(.waiting-table)) {
+  min-height: 0;
+  display: grid;
+  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "opponent-player" "opponent-hand" "rival" "field" "turn" "self" "hand" "own-player";
+  grid-template-rows: 42px 20px minmax(0, 1fr) minmax(0, 1.7fr) 30px minmax(0, 1fr) minmax(0, .85fr) 42px;
+  row-gap: 2px;
+}
+.enhanced-game .hyper-table:not(:has(.waiting-table)) {
+  grid-template-rows: 76px 20px minmax(0, 1fr) minmax(0, 1.7fr) 30px minmax(0, 1fr) minmax(0, .85fr) 76px;
+}
+.enhanced-game .opponent-player { grid-area: opponent-player; }
+.enhanced-game .own-player { grid-area: own-player; }
+.enhanced-game .opponent-hand { grid-area: opponent-hand; }
+.enhanced-game .capture-zone-opponent { grid-area: rival; }
+.enhanced-game .capture-zone-own { grid-area: self; }
+.enhanced-game .table-middle { grid-area: field; }
+.enhanced-game .turn-banner { grid-area: turn; }
+.enhanced-game .your-hand { grid-area: hand; }
+.enhanced-game .opponent-hand {
+  height: 100%;
+  margin: 0;
+  align-items: center;
+}
+.enhanced-game .opponent-hand .hana-card { height: 100%; width: auto; }
+.enhanced-game .table-middle {
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  padding: 7px 0;
+}
+.enhanced-game .field-area { min-width: 0; min-height: 0; padding: 5px; }
+.enhanced-game .deck-pile { flex: 0 0 38px; }
+.enhanced-game .deck-pile > span { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.enhanced-game .turn-banner {
+  min-height: 0;
+  height: 100%;
+  flex-wrap: nowrap;
+  padding: 3px 8px;
+}
+.turn-status-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.enhanced-game .turn-banner button { position: absolute; right: 5px; }
+.enhanced-game .turn-banner:has(button) { padding-inline: 45px; }
+.enhanced-game .your-hand,
+.enhanced-game .your-hand.with-selection {
+  height: 100%;
+  min-height: 0;
+  padding: 9px 0;
+  container-type: size;
+}
+.enhanced-game .hand-slot { width: min(58px, calc(100cqh * 240 / 380)); }
+.enhanced-game .capture-zone {
+  min-height: 0;
+  align-self: stretch;
+  container-type: size;
+}
+.enhanced-game .captured-yaku {
+  margin: 0;
+  height: 100%;
+  --pile-card-height: clamp(12px, calc(100cqh - 74px), 69px);
+  --pile-card-width: calc(var(--pile-card-height) * 240 / 380);
+}
+.enhanced-game .captured-yaku-groups { height: 100%; }
+.enhanced-game .captured-yaku-group { min-height: 0; padding: 2px 1px; }
+.enhanced-game .captured-yaku-scroll { height: calc(var(--pile-card-height) + 7px); }
+.enhanced-game .captured-yaku-role { min-height: 10px; line-height: 11px; font-size: 10px; }
+.enhanced-game .captured-yaku-role-mark { position: absolute; right: 0; top: 0; font-size: 5px; }
+.enhanced-game .captured-yaku-role.is-complete .captured-yaku-role-mark { font-size: 6px; }
+.enhanced-game .player-bar,
+.enhanced-game .player-bar.has-hyper {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  grid-template-rows: 30px;
+  align-content: center;
+  align-self: stretch;
+  gap: 0 6px;
+  height: 100%;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 3px 6px;
+}
+.enhanced-game .player-bar.has-hyper { grid-template-rows: 30px 36px; }
+.enhanced-game .player-bar .player-avatar { width: 24px; height: 24px; }
+.enhanced-game .player-bar .player-name { overflow: hidden; }
+.enhanced-game .player-bar .player-name strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.enhanced-game .player-bar .player-name > span { white-space: nowrap; height: 10px; margin-top: 0; }
+.enhanced-game .player-bar .koikoi-tag { padding: 0; font-size: 7px; background: none; }
+.enhanced-game .player-bar .player-score { grid-column: 4; font-size: 18px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.enhanced-game .player-multiplier { grid-column: 3; font-size: 12px; }
+.enhanced-game .player-hyper-status { grid-column: 1 / -1; height: 36px; padding-top: 2px; }
+.enhanced-game .player-hyper-line { height: 16px; min-height: 0; }
+.enhanced-game .player-hyper-bank { font-variant-numeric: tabular-nums; }
+@media (min-width: 700px) and (min-aspect-ratio: 6/5) {
+  .enhanced-game .game-table:not(:has(.waiting-table)) {
+    grid-template-columns: minmax(165px, 1fr) minmax(220px, 2.6fr) minmax(165px, 1fr);
+    grid-template-areas: "opponent-player opponent-hand own-player" "rival field self" "rival turn self" "rival hand self";
+    grid-template-rows: 42px minmax(0, 1fr) 30px minmax(60px, .35fr);
+  }
+  .enhanced-game .hyper-table:not(:has(.waiting-table)) {
+    grid-template-rows: 76px minmax(0, 1fr) 30px minmax(60px, .35fr);
+  }
+  .enhanced-game .opponent-hand { height: 28px; align-self: center; }
+  .enhanced-game .captured-yaku { --pile-card-height: clamp(12px, calc(50cqh - 87px), 69px); }
+  .enhanced-game .captured-yaku-groups { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-height: 720px) and (max-aspect-ratio: 6/5) {
+  .workspace:has(.enhanced-game) > .topbar { display: none; }
+  .enhanced-game .captured-yaku-role { font-size: 9px; line-height: 9px; min-height: 8px; }
+  .enhanced-game .captured-yaku { --pile-card-height: clamp(12px, calc(100cqh - 62px), 45px); }
+  .enhanced-game .game-heading-actions { flex-basis: auto; }
+  .enhanced-game .game-heading-actions button { padding: 4px; font-size: 0; gap: 0; }
+  .enhanced-game .game-heading-actions button b { display: none; }
+}
+@media (min-width: 700px) and (min-aspect-ratio: 6/5) and (max-height: 500px) {
+  .enhanced-game .hyper-table:not(:has(.waiting-table)) {
+    grid-template-rows: 60px minmax(0, 1fr) 24px 48px;
+  }
+  .enhanced-game .player-bar.has-hyper { grid-template-rows: 24px 30px; }
+  .enhanced-game .player-hyper-status { height: 30px; padding-top: 0; }
+  .enhanced-game .player-hyper-status .hyper-hp { height: 13px; }
+  .enhanced-game .captured-yaku { --pile-card-height: 12px; }
+  .enhanced-game .captured-yaku-group h3 { font-size: 8px; }
+  .enhanced-game .captured-yaku-role { font-size: 8px; line-height: 8px; min-height: 8px; }
+  .enhanced-game .captured-yaku-scroll { height: 17px; margin-bottom: 0; }
+}
+.enhanced-game .waiting-table { min-height: 0; height: 100%; gap: clamp(8px, 2cqh, 20px); }
+.enhanced-game .waiting-players { margin-block: 8px; }
+@media (max-height: 600px) {
+  .enhanced-game .waiting-table > .flower-mark,
+  .enhanced-game .waiting-table > .eyebrow { display: none; }
+  .enhanced-game .waiting-table { gap: 6px; }
+  .enhanced-game .waiting-table h2 { font-size: 21px; }
+  .enhanced-game .waiting-players { margin-block: 2px; }
+  .enhanced-game .waiting-players > div { gap: 4px; }
+  .enhanced-game .waiting-avatar { width: 36px; height: 36px; }
+}
+
+/* Always use the existing 24 px footer; long titles never add a row. */
+.enhanced-game .game-underbar {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 12px;
+  font-size: 10px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.music-now-playing { min-width: 0; overflow: hidden; }
+.music-now-playing a {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  color: #bca87a;
+  text-decoration: none;
+  animation: music-credit-in .8s ease-out;
+}
+.music-now-playing a:hover { color: #f0d696; }
+.music-now-playing a:focus-visible { outline: 1px solid currentColor; outline-offset: -1px; }
+.music-now-playing svg { flex-shrink: 0; }
+.music-track-title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.music-track-artist { flex-shrink: 0; color: #92a38a; }
+.music-track-artist::before { content: "· "; }
+@keyframes music-credit-in { from { opacity: 0; } to { opacity: 1; } }
+@media (max-width: 600px) {
+  .enhanced-game .game-underbar { gap: 7px; }
+  .enhanced-game .game-connection > span:last-child { display: none; }
+  .music-now-playing a { gap: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-now-playing a { animation: none; }
 }

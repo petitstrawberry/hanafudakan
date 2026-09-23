@@ -1226,6 +1226,28 @@ main {
   margin-top: 7px;
   line-height: 1.7;
 }
+.setting-select-label {
+  flex-shrink: 0;
+}
+.setting-select-label select {
+  min-width: 142px;
+  padding: 9px 30px 9px 11px;
+  font-size: 11px;
+  color: #ead9a6;
+  border-color: #6f704c;
+  background: #202d20;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .toggle {
   width: 38px;
   height: 22px;
@@ -1359,6 +1381,46 @@ main {
   font-size: 9px;
   color: #8c9a7c;
 }
+@media (max-width: 520px) {
+  .mode-options { grid-template-columns: 1fr; }
+}
+.hyper-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 11px 12px;
+  text-align: left;
+  border: 1px solid rgba(171, 102, 63, .5);
+  border-radius: 8px;
+  color: #b2bda4;
+  background: linear-gradient(100deg, rgba(69, 42, 31, .34), rgba(17, 39, 29, .72));
+  cursor: pointer;
+  overflow: hidden;
+}
+.hyper-toggle::after {
+  content: "";
+  position: absolute;
+  inset: -80%;
+  background: conic-gradient(from 40deg, transparent 0 32%, rgba(244, 195, 95, .16) 38%, transparent 46% 66%, rgba(207, 86, 48, .15) 71%, transparent 78%);
+  opacity: .5;
+  pointer-events: none;
+  transition: transform .6s ease, opacity .3s ease;
+}
+.hyper-toggle:hover::after, .hyper-toggle.enabled::after { transform: rotate(30deg); opacity: .95; }
+.hyper-toggle-icon { position: relative; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid #8a6044; border-radius: 50%; color: #d7995a; }
+.hyper-toggle span:nth-child(2), .hyper-toggle > b { position: relative; z-index: 1; }
+.hyper-toggle strong { display: block; color: #dfb26c; font-size: 12px; }
+.hyper-toggle small { display: block; margin-top: 2px; color: #849882; font-size: 9px; }
+.hyper-toggle > b { min-width: 31px; text-align: center; color: #8d9d89; font-size: 9px; letter-spacing: .08em; }
+.hyper-toggle.enabled { border-color: #efb95d; color: #f8d488; box-shadow: 0 0 20px rgba(220, 105, 46, .2), inset 0 0 18px rgba(248, 191, 84, .08); }
+.hyper-toggle.enabled .hyper-toggle-icon { color: #ffe4a0; border-color: #f5c369; box-shadow: 0 0 13px rgba(244, 181, 69, .55); animation: hyper-toggle-pulse 1.6s ease-in-out infinite; }
+.hyper-toggle.enabled > b { color: #ffd67e; }
+@keyframes hyper-toggle-pulse { 50% { transform: scale(1.08) rotate(8deg); box-shadow: 0 0 21px rgba(244, 181, 69, .75); } }
+@media (prefers-reduced-motion: reduce) { .hyper-toggle.enabled .hyper-toggle-icon { animation: none; } }
 .checkbox-label {
   display: flex;
   align-items: center;

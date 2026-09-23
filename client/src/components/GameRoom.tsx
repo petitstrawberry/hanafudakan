@@ -10,8 +10,8 @@ import {
   Eye,
   Flower2,
   MessageCircle,
+  Music2,
   Plus,
-  ShieldCheck,
   Sparkles,
   Trophy,
   X,
@@ -19,14 +19,20 @@ import {
 import Card from "./Card";
 import CapturedYaku from "./CapturedYaku";
 import { YakuCutIn } from "./YakuCutIn";
+import Scene from "./Scene";
+import type { TableSceneState } from "./Scene";
 import {
   buildYakuAnnouncements,
   yakuAnnouncementDuration,
   type YakuAnnouncement,
 } from "../lib/yakuAnnouncements";
 import { cards, cardImage } from "../lib/cards";
+import { useCardSkin } from "../lib/cardSkin";
 import { playSound } from "../lib/audio";
+import { MUSIC_PLAYLISTS, setMusicMode } from "../lib/music";
+import MusicNowPlaying from "./MusicNowPlaying";
 import { getYakuStatuses } from "../lib/yakuStatus";
+import { boardChanged, captureTargets } from "../lib/hyperGame";
 import { fitFieldLayout } from "../lib/fieldLayout";
 import { reconcileFieldSlots, type FieldSlot } from "../lib/fieldSlots";
 import type { PublicGameEvent, RoomView } from "../lib/types";
@@ -40,6 +46,7 @@ type Props = {
   send: (command: object) => void;
   leave: () => void;
   copyInvite: () => void;
+  onBackend?: (backend: string) => void;
 };
 // Every card in these events has already been played or revealed by the server.
 // Neither the opponent's remaining hand nor the stock is part of this protocol.
@@ -61,10 +68,27 @@ type Flight = {
   targets: { id: number; position: Position; destination: Position }[];
   stage: "reveal" | "travel" | "stack" | "settle" | "collect";
   duration: number;
+  hyper: boolean;
+};
+type HyperCutIn = {
+  name: string;
+  source: string;
+  description: string;
+  sequence: number;
+};
+type HpAttack = {
+  sequence: number;
+  source: Position;
+  target: Position;
+  defender: number;
+  damage: number;
+  remaining: number;
+  cardIds: number[];
+  stage: "travel" | "impact" | "burst";
+  reducedMotion: boolean;
 };
 const nameOf = (id: number) => cards[id]?.name || "花札";
-const sameMonth = (left: number, right: number) =>
-  Math.floor(left / 4) === Math.floor(right / 4);
+type DealCard = { id: number; back: boolean; source: Position; target: Position; delay: number };
 const fieldWobble = (id: number, index: number) => ({
   "--field-shift-x": `${((id * 5 + index * 3) % 7) - 3}px`,
   "--field-shift-y": `${((id * 3 + index * 5) % 5) - 2}px`,
@@ -76,6 +100,7 @@ const motionEnabled = () =>
 const signature = (room: RoomView) =>
   JSON.stringify([
     room.round,
+    room.boardRevision,
     room.phase,
     room.turn,
     room.hand,
@@ -84,9 +109,20 @@ const signature = (room: RoomView) =>
     room.deckCount,
     room.players.map((p) => [p.handCount, p.captured, p.score]),
     room.koikoi,
+    room.hyper?.contracts,
+    room.hyper?.stake,
+    room.hyper?.bloom,
+    room.hyper?.chain,
+    room.hyper?.options,
+    room.hyper?.hp,
+    room.hyper?.multiplier,
   ]);
 const sleep = (duration: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, duration));
+// Keep the contract beat readable without stalling the table for several
+// seconds. The queue still waits for this promise, so CPU/opponent moves cannot
+// slip underneath the overlay while it is on screen.
+const hyperCutInDuration = () => (motionEnabled() ? 1800 : 900);
 const paint = () =>
   new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -105,7 +141,9 @@ export default function GameRoom({
   send,
   leave,
   copyInvite,
+  onBackend,
 }: Props) {
+  const { skin } = useCardSkin();
   const [room, setRoom] = useState<RoomView>(incoming);
   const displayed = useRef<RoomView>(incoming);
   const latest = useRef<RoomView>(incoming);
@@ -122,17 +160,22 @@ export default function GameRoom({
     id: string;
   } | null>(null);
   const [animating, setAnimating] = useState(false);
+  const [sceneBackend, setSceneBackend] = useState("2D");
   const [submitting, setSubmitting] = useState(false);
   const submitLock = useRef(false);
   const [flight, setFlight] = useState<Flight | null>(null);
   const [landingCard, setLandingCard] = useState<number | null>(null);
-  const fieldSlotState = useRef<{ round: number; slots: FieldSlot[] }>({
-    round: incoming.round || 0,
-    slots: [],
-  });
-  const currentRound = room.round || 0;
-  if (fieldSlotState.current.round !== currentRound) {
-    fieldSlotState.current = { round: currentRound, slots: [] };
+  const [hyperFlash, setHyperFlash] = useState<{ ids: number[]; seq: number } | null>(null);
+  const [hpAttack, setHpAttack] = useState<HpAttack | null>(null);
+  const initialDealPending = useRef(incoming.phase === "play" && incoming.field.length === 8 && incoming.players.every(p => p.handCount === 8));
+  const [dealing, setDealing] = useState(initialDealPending.current);
+  const [dealCards, setDealCards] = useState<DealCard[]>([]);
+  const [music, setMusic] = useState(() => localStorage.getItem("hana-music") !== "false");
+  const hyperFlashTimer = useRef(0);
+  const boardKey = `${room.round}:${room.boardRevision ?? 0}:${room.hyper?.contracts.flat().length ?? 0}`;
+  const fieldSlotState = useRef<{ key: string; slots: FieldSlot[] }>({ key: boardKey, slots: [] });
+  if (fieldSlotState.current.key !== boardKey) {
+    fieldSlotState.current = { key: boardKey, slots: [] };
   }
   const fieldSlots = reconcileFieldSlots(
     fieldSlotState.current.slots,
@@ -199,11 +242,13 @@ export default function GameRoom({
         fieldViewport.width,
         fieldViewport.height,
         fieldViewport.maxCardWidth,
+        Math.max(4, Math.ceil(fieldCardCount / 2)),
       ),
     [fieldCardCount, fieldViewport],
   );
   const [announcement, setAnnouncement] = useState("");
   const [celebration, setCelebration] = useState("");
+  const [hyperCutIn, setHyperCutIn] = useState<HyperCutIn | null>(null);
   const [cue, setCue] = useState<Cue | null>(null);
   const cueSequence = useRef(0);
   const announcedRoles = useRef(
@@ -216,7 +261,7 @@ export default function GameRoom({
   const table = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLElement>(null);
   const chatBottom = useRef<HTMLDivElement>(null);
-  const queue = useRef<{ room: AnimatedRoom; resync: boolean }[]>([]);
+  const queue = useRef<{ room: AnimatedRoom; resync: boolean; initialDeal?: boolean }[]>([]);
   const processing = useRef(false);
   const alive = useRef(true);
   const lastEvent = useRef(
@@ -227,22 +272,24 @@ export default function GameRoom({
   const own = me ?? 0;
   const opponent = own === 0 ? 1 : 0;
   const myTurn = me !== null && room.turn === me;
+  const hyperMode = room.hyperEnabled || room.mode === "hyper";
+  const hyperState = room.hyper;
   const playing = room.phase === "play";
   const drawnChoice = room.phase === "draw_choice";
   const deciding = room.phase === "decision";
   const ended = room.phase === "round_end" || room.phase === "finished";
   const locked =
-    !connected || reconnectPending.current || busy || animating || submitting;
+    !connected || reconnectPending.current || busy || animating || submitting || dealing;
   const canPlay = myTurn && playing && !locked;
   const activeCard = drawnChoice ? room.drawnCard : selected;
   const targets =
     activeCard === null
       ? []
-      : room.field.filter((id) => sameMonth(id, activeCard));
+      : captureTargets(room, activeCard);
   const hoverCard = selected ?? hovered;
   const assistTargets =
     assist && hoverCard !== null
-      ? room.field.filter((id) => sameMonth(id, hoverCard))
+      ? captureTargets(room, hoverCard)
       : [];
   const yakuByPlayer = useMemo(
     () =>
@@ -260,12 +307,35 @@ export default function GameRoom({
     : undefined;
   const resultWinner =
     room.phase === "finished" ? room.matchWinner : room.winner;
+  const handleSceneBackend = useCallback(
+    (backend: string) => {
+      setSceneBackend(backend);
+      onBackend?.(backend);
+    },
+    [onBackend],
+  );
+  const battleMusic = hyperState?.contracts.some(contracts => contracts.length > 0) ?? false;
+  useEffect(() => {
+    localStorage.setItem("hana-music", String(music));
+    const syncMusic = () => setMusicMode(music && connected && !ended && !document.hidden ? battleMusic ? "hyper" : "calm" : null);
+    syncMusic();
+    document.addEventListener("pointerdown", syncMusic, { passive: true });
+    document.addEventListener("keydown", syncMusic);
+    document.addEventListener("visibilitychange", syncMusic);
+    return () => {
+      document.removeEventListener("pointerdown", syncMusic);
+      document.removeEventListener("keydown", syncMusic);
+      document.removeEventListener("visibilitychange", syncMusic);
+    };
+  }, [music, connected, ended, battleMusic]);
+  useEffect(() => () => setMusicMode(null), []);
 
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
       queue.current = [];
+      window.clearTimeout(hyperFlashTimer.current);
     };
   }, []);
   useEffect(() => {
@@ -307,6 +377,11 @@ export default function GameRoom({
     const timer = window.setTimeout(() => setCelebration(""), 1900);
     return () => window.clearTimeout(timer);
   }, [celebration]);
+  useEffect(() => {
+    if (!hyperCutIn) return;
+    const timer = window.setTimeout(() => setHyperCutIn(null), hyperCutInDuration());
+    return () => window.clearTimeout(timer);
+  }, [hyperCutIn]);
 
   useEffect(() => {
     if (!connected) {
@@ -316,6 +391,12 @@ export default function GameRoom({
       setCue(null);
       setFlight(null);
       setLandingCard(null);
+      setHyperCutIn(null);
+      setHpAttack(null);
+      setDealCards([]);
+      setDealing(false);
+      window.clearTimeout(hyperFlashTimer.current);
+      setHyperFlash(null);
     }
   }, [connected]);
 
@@ -325,12 +406,14 @@ export default function GameRoom({
     if (!connected) return;
     const next = incoming as AnimatedRoom;
     const resync = reconnectPending.current;
+    const initialDeal = initialDealPending.current;
+    initialDealPending.current = false;
     reconnectPending.current = false;
     const nextSignature = signature(next);
     const hasUnseen = (next.events || []).some(
       (event) => event.id > lastEvent.current,
     );
-    if (nextSignature === receivedSignature.current && !hasUnseen && !resync) {
+    if (nextSignature === receivedSignature.current && !hasUnseen && !resync && !initialDeal) {
       if (!processing.current) {
         displayed.current = next;
         setRoom(next);
@@ -342,7 +425,7 @@ export default function GameRoom({
       queue.current = [];
       playbackEpoch.current++;
     }
-    queue.current.push({ room: next, resync });
+    queue.current.push({ room: next, resync, initialDeal });
     if (processing.current) return;
     processing.current = true;
     setAnimating(true);
@@ -351,6 +434,39 @@ export default function GameRoom({
       if (!alive.current) return;
       displayed.current = value;
       setRoom(value);
+    };
+    const runDeal = async (value: RoomView, epoch: number) => {
+      if (!motionEnabled()) { setDealing(false); return; }
+      setDealing(true);
+      setAnnouncement("山札から手札と場へ配札中…");
+      await paint();
+      if (!alive.current || epoch !== playbackEpoch.current) return;
+      const fallback = positionOf(table.current, { x: 0, y: 0, width: 300, height: 400 });
+      const source = positionOf(table.current?.querySelector(".deck-pile > .hana-card") || null, fallback);
+      const ownCards = Array.from(table.current?.querySelectorAll(".your-hand .hana-card") || []);
+      const rivalCards = Array.from(table.current?.querySelectorAll(".opponent-hand .hana-card") || []);
+      const fieldCards = Array.from(table.current?.querySelectorAll(".field-slot:not(.field-empty-slot) > .hana-card") || []);
+      const dealt: DealCard[] = [];
+      const append = (element: Element | undefined, id: number, back: boolean) => {
+        if (element) dealt.push({ id, back, source, target: positionOf(element, source), delay: dealt.length * 45 });
+      };
+      for (let i = 0; i < Math.max(ownCards.length, rivalCards.length, fieldCards.length); i++) {
+        append(rivalCards[i], 0, true);
+        append(ownCards[i], value.hand[i] ?? 0, value.myIndex === null);
+        append(fieldCards[i], Number(fieldCards[i]?.getAttribute("data-card-id") ?? 0), false);
+      }
+      setDealCards(dealt);
+      for (let i = 0; i < dealt.length; i++) {
+        if (!alive.current || epoch !== playbackEpoch.current) return;
+        if (i % 3 === 0) playSound("deal");
+        await sleep(45);
+      }
+      await sleep(300);
+      if (!alive.current || epoch !== playbackEpoch.current) return;
+      setDealCards([]);
+      setDealing(false);
+      setAnnouncement("");
+      await paint();
     };
     const runEvent = async (event: PublicMove, epoch: number) => {
       const before = displayed.current;
@@ -425,9 +541,18 @@ export default function GameRoom({
         };
       };
       const destination = destinationFor(event.cardId);
+      // A Hyper capture means the taker already holds a Hyper contract.
+      // Merely playing in a Hyper room keeps the normal capture sound.
+      const hyperCharged =
+        hyperMode &&
+        event.captured &&
+        (before.hyper?.contracts[event.player]?.length ?? 0) > 0;
       const animate = motionEnabled();
+      const cascading = hyperCharged && (event.hyper?.chain[event.player] ?? 0) >= 2;
       const timing = animate
-        ? { reveal: 350, travel: 430, stack: 450, collect: 450 }
+        ? cascading
+          ? { reveal: 200, travel: 180, stack: 180, collect: 200 }
+          : { reveal: 350, travel: 430, stack: 450, collect: 450 }
         : { reveal: 120, travel: 0, stack: 100, collect: 0 };
       const base = {
         event,
@@ -439,6 +564,7 @@ export default function GameRoom({
           destination: destinationFor(item.id),
         })),
         duration: timing.travel,
+        hyper: hyperCharged,
       };
       setAnnouncement(
         `${before.players[event.player]?.name || "プレイヤー"} · ${event.source === "hand" ? "手札から" : "山札から"} ${nameOf(event.cardId)}${event.requiresChoice ? " · 合わせる札を選択" : event.captured ? ` · ${event.targetIds.length + 1}枚獲得` : " · 場へ"}`,
@@ -474,7 +600,23 @@ export default function GameRoom({
         await sleep(settleDuration);
         if (!alive.current || epoch !== playbackEpoch.current) return;
         if (event.captured) {
-          playSound("capture");
+          if (hyperCharged) {
+            const flashIds = [event.cardId, ...event.targetIds];
+            const seq = event.id;
+            window.clearTimeout(hyperFlashTimer.current);
+            setHyperFlash({ ids: flashIds, seq });
+            hyperFlashTimer.current = window.setTimeout(() => {
+              if (!alive.current) return;
+              setHyperFlash((current) =>
+                current && current.seq === seq ? null : current,
+              );
+            }, 1500);
+          }
+          playSound(hyperCharged ? "hyper_capture" : "capture");
+          if (hyperCharged && event.targetIds.length >= 2) {
+            await sleep(110);
+            playSound("hyper_chain");
+          }
           setFlight(
             animate
               ? { ...base, stage: "collect", duration: timing.collect }
@@ -489,10 +631,11 @@ export default function GameRoom({
         event.source === "hand" && isOwn
           ? before.hand.filter((id) => id !== event.cardId)
           : before.hand;
-      updateView({
+      const nextView: RoomView = {
         ...before,
         hand,
         field: event.field,
+        hyper: before.hyper && event.hyper ? { ...before.hyper, ...event.hyper } : before.hyper,
         deckCount: event.deckCount,
         drawnCard: event.requiresChoice ? event.cardId : null,
         players: before.players.map((player, index) => ({
@@ -503,7 +646,46 @@ export default function GameRoom({
               ? Math.max(0, player.handCount - 1)
               : player.handCount,
         })),
-      });
+      };
+      const defender = 1 - event.player;
+      const previousHp = before.hyper?.hp?.[defender];
+      const remainingHp = event.hyper?.hp?.[defender];
+      setFlight(null);
+      setLandingCard(null);
+      if (event.captured && previousHp !== undefined && remainingHp !== undefined && remainingHp < previousHp) {
+        const hpTarget = positionOf(table.current?.querySelector(
+          `[data-player-index="${defender}"] .hyper-hp meter`,
+        ) || null, center);
+        const attack: HpAttack = {
+          sequence: event.id, source: target, target: hpTarget, defender,
+          damage: previousHp - remainingHp, remaining: remainingHp,
+          cardIds: [event.cardId, ...event.targetIds],
+          stage: "travel", reducedMotion: !animate,
+        };
+        // The cards settle first; HP changes exactly when the projectile lands.
+        updateView({ ...nextView, hyper: { ...nextView.hyper!, hp: before.hyper!.hp } });
+        setHpAttack(attack);
+        await sleep(animate ? 260 : 0);
+        if (!alive.current || epoch !== playbackEpoch.current) return;
+        updateView(nextView);
+        setHpAttack({ ...attack, stage: "impact" });
+        playSound("hp_hit");
+        await sleep(remainingHp === 0 ? 180 : 360);
+        if (!alive.current || epoch !== playbackEpoch.current) return;
+        if (remainingHp === 0) {
+          setHpAttack({ ...attack, stage: "burst" });
+          playSound("ko_blast");
+          // Keep the final snapshot queued until the explosion has dissipated.
+          await sleep(animate ? 1800 : 800);
+          if (!alive.current || epoch !== playbackEpoch.current) return;
+        }
+        setHpAttack(null);
+      } else updateView(nextView);
+      const combo = event.hyper?.chain[event.player] ?? 0;
+      if (remainingHp !== 0 && hyperCharged && combo >= 3 && combo % 3 === 0) {
+        setCelebration(`${combo} CHAIN · ×${((event.hyper?.multiplier?.[event.player] ?? 100) / 100).toFixed(2)}`);
+        playSound("hyper_chain");
+      }
       setFlight(null);
       setLandingCard(null);
       await paint();
@@ -511,12 +693,13 @@ export default function GameRoom({
     void (async () => {
       try {
         while (queue.current.length && alive.current) {
-          const { room: nextRoom, resync: restoring } = queue.current.shift()!;
+          const { room: nextRoom, resync: restoring, initialDeal: firstDeal } = queue.current.shift()!;
           const epoch = playbackEpoch.current;
           const previous = displayed.current;
           const events = (nextRoom.events || []).filter(
             (event) => event.id > lastEvent.current,
           );
+          const redealt = boardChanged(previous, nextRoom);
           const roundChanged =
             nextRoom.round !== previous.round ||
             previous.phase === "waiting" ||
@@ -526,7 +709,58 @@ export default function GameRoom({
           const continuous =
             !restoring &&
             (!events.length || events[0].id === lastEvent.current + 1);
-          if (!roundChanged && continuous) {
+          const announce = !roundChanged && continuous;
+          const shouldDeal = !restoring && (firstDeal || redealt || roundChanged) && nextRoom.phase === "play" && nextRoom.field.length > 0;
+          const calledHyper =
+            nextRoom.hyper?.contracts.some(
+              (contracts, index) =>
+                contracts.length > (previous.hyper?.contracts[index]?.length || 0),
+            ) || false;
+          const hyperContract = calledHyper
+            ? nextRoom.hyper?.contracts
+                .flatMap((contracts, player) =>
+                  contracts
+                    .slice(previous.hyper?.contracts[player]?.length || 0)
+                    .map((contract) => ({ contract, player })),
+                )[0]?.contract
+            : undefined;
+
+          // A contract announcement owns the timeline. Show it before the next
+          // snapshot's move queue is allowed to advance so a CPU/opponent can
+          // never play behind the cut-in overlay.
+          if (redealt || shouldDeal) {
+            // An atomic redeal supersedes movement history from the old board.
+            updateView(nextRoom);
+            setDealing(shouldDeal && motionEnabled());
+            setSelected(null);
+            setHovered(null);
+            setLandingCard(null);
+            setRoleDetail(null);
+            setFlight(null);
+            setHpAttack(null);
+            announcedRoles.current = nextRoom.yaku.map((roles) =>
+              new Map(roles.map((role) => [role.name, role.points])),
+            );
+          }
+          if (calledHyper && announce && hyperContract) {
+            setCelebration(`契約 · ${hyperContract.name}`);
+            setHyperCutIn({
+              name: hyperContract.name,
+              source: hyperContract.source,
+              description: hyperContract.description,
+              sequence: ++cueSequence.current,
+            });
+            playSound("hyper");
+            await sleep(hyperCutInDuration());
+            if (!alive.current) return;
+            if (epoch !== playbackEpoch.current) continue;
+          }
+          if (shouldDeal) {
+            await runDeal(nextRoom, epoch);
+            if (!alive.current) return;
+            if (epoch !== playbackEpoch.current) continue;
+          }
+          if (!roundChanged && !redealt && continuous) {
             for (const event of events) {
               await runEvent(event, epoch);
               if (epoch !== playbackEpoch.current) break;
@@ -535,10 +769,13 @@ export default function GameRoom({
           } else {
             setSelected(null);
             setCelebration("");
+            window.clearTimeout(hyperFlashTimer.current);
+            setHyperFlash(null);
           }
           if (!alive.current) return;
           if (epoch !== playbackEpoch.current) {
             setFlight(null);
+            setHpAttack(null);
             setLandingCard(null);
             setCue(null);
             continue;
@@ -547,12 +784,11 @@ export default function GameRoom({
             lastEvent.current,
             ...events.map((event) => event.id),
           );
-          const announce = !roundChanged && continuous;
           if (!announce)
             announcedRoles.current = nextRoom.yaku.map(
               (roles) => new Map(roles.map((role) => [role.name, role.points])),
             );
-          const cues = announce
+          const cues = announce && !redealt
             ? nextRoom.yaku.flatMap((roles, player) =>
                 buildYakuAnnouncements(
                   Array.from(
@@ -646,6 +882,9 @@ export default function GameRoom({
           if (signature(latest.current) === signature(displayed.current))
             updateView(latest.current);
           setAnimating(false);
+          setHpAttack(null);
+          setDealCards([]);
+          setDealing(false);
           setCue(null);
           setFlight(null);
           setLandingCard(null);
@@ -670,7 +909,7 @@ export default function GameRoom({
   const selectCard = (id: number) => {
     if (!canPlay) return;
     playSound("click");
-    const matches = room.field.filter((fieldId) => sameMonth(id, fieldId));
+    const matches = captureTargets(room, id);
     if (matches.length === 2) {
       setSelected((current) => (current === id ? null : id));
     } else {
@@ -715,8 +954,12 @@ export default function GameRoom({
     }
   };
   const points = (room.yaku[own] || []).reduce((sum, y) => sum + y.points, 0);
-  const multiplier =
-    (points >= 7 ? 2 : 1) * (room.koikoi[opponent] > 0 ? 2 : 1);
+  const multiplier = hyperMode
+    ? (hyperState?.multiplier?.[own] ?? 100) / 100
+    : (points >= 7 ? 2 : 1) * (room.koikoi[opponent] > 0 ? 2 : 1);
+  const hyperProjected = hyperState?.projected?.[own] ?? Math.ceil(
+    (points + (hyperState?.stake[own] || 0) + (hyperState?.bloom[own] || 0)) * multiplier,
+  );
   const exhausted = room.players.every((player) => player.handCount === 0);
 
   const renderCaptured = (index: number) =>
@@ -726,6 +969,7 @@ export default function GameRoom({
         playerName={room.players[index].name}
         captured={room.players[index].captured}
         statuses={yakuByPlayer[index]}
+        flashIds={hyperFlash?.ids}
         self={me === index}
         spectator={me === null}
         assist={assist}
@@ -747,6 +991,9 @@ export default function GameRoom({
       ref={root}
       className="game-page enhanced-game"
       data-animating={animating || submitting}
+      data-hp-impact={hpAttack?.stage === "impact" && !hpAttack.reducedMotion ? hpAttack.defender : undefined}
+      data-ko-shatter={hpAttack?.stage === "burst" && !hpAttack.reducedMotion ? hpAttack.defender : undefined}
+      data-dealing={dealing || undefined}
     >
       <div className="game-heading">
         <button className="text-button" onClick={leave}>
@@ -756,11 +1003,18 @@ export default function GameRoom({
         <div>
           <h1>{room.name}</h1>
           <span>
-            {room.mode === "cpu" ? "CPU 対戦" : "オンライン対戦"} · 第{" "}
+            {hyperMode
+              ? `ハイパー花札 · ${room.mode === "cpu" || room.mode === "hyper" ? "花影 Hyper AI" : "対人"}`
+              : room.mode === "cpu"
+                ? "CPU 対戦"
+                : "オンライン対戦"} · 第{" "}
             {room.round || 1} 局 / {room.rounds} 回戦
           </span>
         </div>
         <div className="game-heading-actions">
+          <button className={`assist-toggle ${music ? "on" : ""}`} role="switch" aria-checked={music} aria-label="BGM" title={`${battleMusic ? "ハイパーBGM" : "通常BGM"}：${MUSIC_PLAYLISTS[battleMusic ? "hyper" : "calm"].length}曲メドレー`} onClick={() => setMusic(value => !value)}>
+            <Music2 size={14} />BGM
+          </button>
           <button
             className={`game-chat-toggle assist-toggle ${showChat ? "on" : ""}`}
             aria-expanded={showChat}
@@ -790,8 +1044,37 @@ export default function GameRoom({
         <div className="game-primary">
           <div
             ref={table}
-            className={`game-table ${animating ? "table-in-motion" : ""}`}
+            className={`game-table three-dimensional-table ${animating ? "table-in-motion" : ""} ${hyperMode ? "hyper-table" : ""} ${hyperFlash ? "hyper-flash-active" : ""}`}
+            data-scene-backend={sceneBackend}
           >
+            <Scene
+              placement="table"
+              active={!ended && motionEnabled()}
+              intensity={hyperMode ? 1.8 : 0.92}
+              cardSkin={skin}
+              game={
+                {
+                  hyper: hyperMode,
+                  field: room.field,
+                  hand: room.hand,
+                  opponentHandCount: room.players[opponent]?.handCount || 0,
+                  deckCount: room.deckCount,
+                  drawnCard: room.drawnCard,
+                  phase: room.phase,
+                  turn: room.turn,
+                  eventId: flight?.event.id || room.events.at(-1)?.id || 0,
+                  eventCaptured: flight?.event.captured || room.events.at(-1)?.captured || false,
+                  eventCardId: flight?.event.cardId ?? null,
+                  eventTargetIds: flight?.event.targetIds || [],
+                  eventStage: flight?.stage || null,
+                  effectId: hyperMode
+                    ? (flight?.event.id || room.events.at(-1)?.id || 0) * 10
+                      + (room.hyper?.contracts.flat().length || 0)
+                    : flight?.event.id || room.events.at(-1)?.id || 0,
+                } as TableSceneState
+              }
+              onReady={handleSceneBackend}
+            />
             <div className="table-corner corner-one" />
             <div className="table-corner corner-two" />
             <div className="table-corner corner-three" />
@@ -850,6 +1133,7 @@ export default function GameRoom({
               <>
                 <PlayerBar
                   player={room.players[opponent]}
+                  hyper={hyperState}
                   playerIndex={opponent}
                   position="opponent"
                   active={room.turn === opponent && !ended}
@@ -928,7 +1212,7 @@ export default function GameRoom({
                           landingCard === id && !room.field.includes(id);
                         return (
                           <div
-                            className={`field-slot ${landing ? "field-landing-slot" : ""} ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""}`}
+                            className={`field-slot ${landing ? "field-landing-slot" : ""} ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""} ${hyperFlash?.ids.includes(id) ? "hyper-capture-flash" : ""}`}
                             key={id}
                             style={fieldWobble(id, index) as CSSProperties}
                             data-landing-card={landing ? id : undefined}
@@ -961,7 +1245,7 @@ export default function GameRoom({
                   <span
                     className={`connection-dot ${connected ? "online" : ""}`}
                   />
-                  {status}
+                  <span className="turn-status-text" title={status}>{status}</span>
                   {selected !== null && !locked && (
                     <button onClick={() => setSelected(null)}>取消</button>
                   )}
@@ -997,9 +1281,7 @@ export default function GameRoom({
                     </div>
                   ) : (
                     room.hand.map((id) => {
-                      const canCapture = room.field.some((fieldId) =>
-                        sameMonth(id, fieldId),
-                      );
+                      const canCapture = captureTargets(room, id).length > 0;
                       return (
                         <div
                           className={`hand-slot ${assist && canCapture && myTurn ? "can-capture" : ""} ${selected === id ? "is-selected" : ""} ${flight?.event.source === "hand" && flight.event.cardId === id ? "card-in-flight" : ""}`}
@@ -1018,7 +1300,6 @@ export default function GameRoom({
                           {assist && canCapture && myTurn && (
                             <span
                               className="hand-match-dot"
-                              title="同じ月の場札があります"
                             />
                           )}
                         </div>
@@ -1026,17 +1307,9 @@ export default function GameRoom({
                     })
                   )}
                 </div>
-                {assist &&
-                  myTurn &&
-                  playing &&
-                  selected === null &&
-                  !animating && (
-                    <div className="hand-assist-legend">
-                      <span /> 光の印は、今取れる札がある手札です
-                    </div>
-                  )}
                 <PlayerBar
                   player={room.players[own]}
+                  hyper={hyperState}
                   playerIndex={own}
                   position="own"
                   active={room.turn === own && !ended}
@@ -1069,7 +1342,7 @@ export default function GameRoom({
                       </div>
                       <div className="decision-points">
                         <strong>
-                          {points * multiplier}
+                          {hyperMode ? hyperProjected : points * multiplier}
                           <small>文</small>
                         </strong>
                         <span>
@@ -1077,9 +1350,9 @@ export default function GameRoom({
                         </span>
                       </div>
                       <p>
-                        {exhausted
-                          ? "最後の手札です。あがって得点を確定しましょう。"
-                          : "ここであがる。それとも、もう一役。"}
+                        {hyperMode
+                          ? "ハイパー化：選んだ役だけを賭け金にし、双方の取り札を没収。48枚すべてを戻して再配布し、相手の手番へ。負け・流局では賭け金も失います。"
+                          : exhausted ? "最後の手札です。あがって得点を確定しましょう。" : "ここであがる。それとも、もう一役。"}
                       </p>
                       <div>
                         <button
@@ -1099,10 +1372,31 @@ export default function GameRoom({
                             submit({ type: "decision", koikoi: true })
                           }
                         >
-                          こいこい！
+                          {hyperMode ? "こいこい！ 倍率＋0.5" : "こいこい！"}
                           <Sparkles size={16} />
                         </button>
                       </div>
+                      {hyperMode && hyperState?.options.length ? (
+                        <div className="hyper-contract-options" aria-label="Hyper契約候補">
+                          <span className="eyebrow">HYPER CONTRACT · 役を能力へ</span>
+                          <div>
+                            {hyperState.options.map((option) => (
+                              <button
+                                key={option.contract.id}
+                                className="hyper-contract-option"
+                                disabled={locked}
+                                onClick={() =>
+                                  submit({ type: "hyper", role: option.role })
+                                }
+                              >
+                                <strong>{option.contract.name}</strong>
+                                <span>{option.role} · 賭け金{option.points}文</span>
+                                <small>{option.contract.description}</small>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 )}
@@ -1111,7 +1405,9 @@ export default function GameRoom({
                     <div className="decision-panel result-panel">
                       <Trophy className="gold" size={35} />
                       <span className="eyebrow">
-                        {room.phase === "finished"
+                        {hyperState?.hp?.some((hp) => hp === 0)
+                          ? "K.O. · 修羅場決着"
+                          : room.phase === "finished"
                           ? "FINAL RESULT"
                           : "ROUND RESULT"}
                       </span>
@@ -1193,18 +1489,15 @@ export default function GameRoom({
             )}
           </div>
           <div className="game-underbar">
-            <span>
+            <span className="game-connection" title={connected ? "リアルタイム接続中" : "再接続中…"}>
               <span className={`connection-dot ${connected ? "online" : ""}`} />
-              {connected ? "リアルタイム接続中" : "再接続中…"}
+              <span>{connected ? "リアルタイム接続中" : "再接続中…"}</span>
             </span>
             <span>
               <Eye size={13} />
               {incoming.spectators} 人が観戦
             </span>
-            <span>
-              <ShieldCheck size={13} />
-              サーバー判定
-            </span>
+            <MusicNowPlaying />
           </div>
         </div>
         {showChat && (
@@ -1313,7 +1606,7 @@ export default function GameRoom({
                     className={`${blocked ? "role-card-blocked" : ""} ${room.field.includes(id) ? "role-card-in-field" : ""}`}
                     title={`${nameOf(id)}${blocked ? " · 相手が獲得済み" : room.field.includes(id) ? " · 場にあります" : ""}`}
                   >
-                    <img src={cardImage(id)} alt={nameOf(id)} />
+                    <img src={cardImage(id, skin)} alt={nameOf(id)} />
                     {blocked && <X size={13} />}
                   </span>
                 );
@@ -1337,13 +1630,28 @@ export default function GameRoom({
           </div>,
           document.body,
         )}
+      {hyperCutIn &&
+        createPortal(
+          <HyperContractCutIn cutIn={hyperCutIn} />,
+          document.body,
+        )}
       {flight && createPortal(<MoveOverlay flight={flight} />, document.body)}
+      {hpAttack && createPortal(<HpAttackOverlay key={`${hpAttack.sequence}:${hpAttack.stage}`} attack={hpAttack} />, document.body)}
+      {dealCards.length > 0 && createPortal(<div className="opening-deal-overlay" aria-hidden="true">
+        {dealCards.map((card, i) => <div key={i} className="opening-deal-card" style={{
+          left: card.target.x, top: card.target.y, width: card.target.width, height: card.target.height,
+          "--deal-x": `${card.source.x - card.target.x}px`, "--deal-y": `${card.source.y - card.target.y}px`,
+          "--deal-scale": card.source.width / Math.max(1, card.target.width), "--deal-delay": `${card.delay}ms`,
+        } as CSSProperties}><Card id={card.id} back={card.back} /></div>)}
+      </div>, document.body)}
     </section>
   );
 }
 
 function MoveOverlay({ flight }: { flight: Flight }) {
-  const { source, target, destination, event, stage, duration } = flight;
+  const { skin } = useCardSkin();
+  const { source, target, destination, event, stage, duration, hyper } = flight;
+  const hyperCharged = hyper && event.captured;
   const position: CSSProperties = {
     "--source-x": `${source.x}px`,
     "--source-y": `${source.y}px`,
@@ -1357,7 +1665,7 @@ function MoveOverlay({ flight }: { flight: Flight }) {
   } as CSSProperties;
   return (
     <div
-      className={`move-overlay move-${stage}`}
+      className={`move-overlay move-${stage} ${hyperCharged ? "hyper-capture" : ""}`}
       aria-hidden="true"
       style={position}
     >
@@ -1381,12 +1689,12 @@ function MoveOverlay({ flight }: { flight: Flight }) {
                 } as CSSProperties
               }
             >
-              <img src={cardImage(id)} alt="" />
+              <img src={cardImage(id, skin)} alt="" />
             </div>
           ),
         )}
       <div className="flying-card played-copy" key={`${event.id}-${stage}`}>
-        <img src={cardImage(event.cardId)} alt="" />
+        <img src={cardImage(event.cardId, skin)} alt="" />
       </div>
       {(stage === "stack" || stage === "collect") && event.captured && (
         <div
@@ -1409,8 +1717,98 @@ function MoveOverlay({ flight }: { flight: Flight }) {
   );
 }
 
+function HyperContractCutIn({ cutIn }: { cutIn: HyperCutIn }) {
+  return (
+    <div className="hyper-contract-cutin" aria-live="assertive">
+      <div className="hyper-contract-cutin-rays" aria-hidden="true" />
+      <div className="hyper-contract-cutin-copy">
+        <span>HYPER CONTRACT · {cutIn.source}</span>
+        <strong>{cutIn.name}</strong>
+        <small>{cutIn.description}</small>
+        <em>REDEAL · 双方の手札・場・山札を再配布</em>
+      </div>
+      <div className="hyper-contract-cutin-seal" aria-hidden="true">契</div>
+    </div>
+  );
+}
+
+function HpAttackOverlay({ attack }: { attack: HpAttack }) {
+  const { skin } = useCardSkin();
+  const x = attack.source.x + attack.source.width / 2;
+  const y = attack.source.y + attack.source.height / 2;
+  const tx = attack.target.x + attack.target.width / 2;
+  const ty = attack.target.y + attack.target.height / 2;
+  const dx = tx - x;
+  const dy = ty - y;
+  return <div className={`hp-attack-overlay ${attack.stage} ${attack.reducedMotion ? "reduced-motion" : ""} ${attack.remaining === 0 ? "is-ko" : ""}`} aria-hidden="true">
+    {attack.stage === "travel" && !attack.reducedMotion && <div className="hp-attack-ray" style={{ left: x, top: y, width: Math.hypot(dx, dy), transform: `rotate(${Math.atan2(dy, dx)}rad)` }}>
+      <i className="hp-attack-projectile" /><i className="hp-attack-trail" />
+    </div>}
+    {attack.stage === "impact" && <div className="hp-attack-impact" style={{ left: tx, top: ty }}>
+      <i className="hp-attack-ring" />
+      {Array.from({ length: 8 }, (_, i) => <i key={i} className="hp-attack-spark" style={{ "--spark-angle": `${i * 45}deg` } as CSSProperties} />)}
+      <strong className="hp-attack-damage" style={{ top: ty < 100 ? 12 : -40 }}>−{attack.damage}<small>{attack.remaining === 0 ? "K.O." : "DAMAGE"}</small></strong>
+    </div>}
+    {attack.stage === "burst" && <div className="ko-finale">
+      <div className="ko-explosion-origin" style={{ left: tx, top: ty }}>
+        <i className="ko-explosion-core" />
+        <i className="ko-shockwave" /><i className="ko-shockwave second" />
+        {Array.from({ length: 48 }, (_, i) => {
+          const angle = i * 2.39996;
+          const reach = .35 + (i % 7) * .09;
+          return <i key={i} className={`ko-debris ${i % 3 === 0 ? "ember" : "card-shard"}`} style={{
+            "--debris-x": `${Math.cos(angle) * reach * 100}vw`,
+            "--debris-y": `${Math.sin(angle) * reach * 100}vh`,
+            "--debris-spin": `${(i % 2 ? 1 : -1) * (240 + i * 17)}deg`,
+            "--debris-delay": `${(i % 4) * 18}ms`,
+            backgroundImage: i % 3 ? `url(${cardImage(attack.cardIds[i % attack.cardIds.length], skin)})` : undefined,
+            backgroundPosition: `${(i % 3) * 50}% ${Math.floor(i / 3) % 3 * 50}%`,
+          } as CSSProperties} />;
+        })}
+      </div>
+      <div className="ko-finale-title"><small>修 羅 場 決 着</small><strong>K.O.</strong><span>完全決着</span></div>
+    </div>}
+  </div>;
+}
+
+function HyperPlayerStatus({ state, index, name }: {
+  state: NonNullable<RoomView["hyper"]>;
+  index: number;
+  name: string;
+}) {
+  const contracts = state.contracts[index] ?? [];
+  const chain = state.chain[index] || 0;
+  const hp = state.hp?.[index];
+  return (
+    <div className="player-hyper-status" aria-label={`${name}のハイパー状態`}>
+      <div className="player-hyper-line">
+        <span className={`player-chain ${chain >= 3 ? "is-fever" : ""}`} key={chain}>
+          <b>{contracts.length ? chain : "—"}</b> CHAIN
+        </span>
+        <span className="player-hyper-bank">賭け <b>{state.stake[index]}</b> · 花力 <b>{state.bloom[index]}</b></span>
+        <details className="player-contract-details">
+          <summary>{contracts.length ? contracts.map(c => c.name).join("・") : "未契約"}</summary>
+          <div className="player-contract-popover">
+            <strong>契約と連鎖</strong>
+            <p>最初の獲得で追加めくり。取れた手番はCHAINを持ち越し、3連鎖ごとに追加めくりと倍率＋0.25。追加めくりは各手番4回まで。</p>
+            <p>倍率は契約・連鎖・こいこい・能力で上昇（最大×8）。賭け金と花力は勝った時だけ得点になります。</p>
+            {contracts.map(c => <p key={c.id}><b>{c.name}</b> · {c.description}</p>)}
+            {state.hp && <p>修羅場：双方が取得枚数ぶん攻撃。3連鎖以上は＋1。HP0でK.O.、役でのあがりも可能。</p>}
+          </div>
+        </details>
+      </div>
+      <div className={`hyper-hp ${hp !== undefined && hp <= 6 ? "critical" : ""}`} style={{ visibility: hp === undefined ? "hidden" : undefined }} aria-hidden={hp === undefined}>
+        <span>HP</span>
+        <meter min={0} max={state.hpMax ?? 18} value={hp ?? 0} aria-label={`${name}のHP`} />
+        <b key={hp}>{hp}<small>/{state.hpMax ?? 18}</small></b>
+      </div>
+    </div>
+  );
+}
+
 function PlayerBar({
   player,
+  hyper,
   playerIndex,
   position,
   active,
@@ -1419,6 +1817,7 @@ function PlayerBar({
   self = false,
 }: {
   player: RoomView["players"][number] | undefined;
+  hyper?: RoomView["hyper"];
   playerIndex: number;
   position: "opponent" | "own";
   active: boolean;
@@ -1429,7 +1828,7 @@ function PlayerBar({
   if (!player) return null;
   return (
     <div
-      className={`player-bar ${position}-player ${active ? "active" : ""}`}
+      className={`player-bar ${position}-player ${active ? "active" : ""} ${hyper ? "has-hyper" : ""}`}
       data-player-index={playerIndex}
     >
       <span className={`player-avatar ${player.isCpu ? "cpu" : ""}`}>
@@ -1443,17 +1842,17 @@ function PlayerBar({
         <span>
           {player.isCpu ? "COMPUTER" : player.connected ? "ONLINE" : "OFFLINE"}
           {dealer && <b>親</b>}
+          {koikoi > 0 && <b className="koikoi-tag">こいこい{koikoi > 1 ? ` ×${koikoi}` : ""}</b>}
         </span>
       </div>
-      {koikoi > 0 && (
-        <span className="koikoi-tag">
-          こいこい{koikoi > 1 ? ` ×${koikoi}` : ""}
-        </span>
-      )}
+      {hyper && <strong className="player-multiplier" aria-label={`${player.name}の倍率`}>
+        ×{((hyper.multiplier?.[playerIndex] ?? 100) / 100).toFixed(2)}
+      </strong>}
       <div className="player-score">
         {player.score}
         <small>文</small>
       </div>
+      {hyper && <HyperPlayerStatus state={hyper} index={playerIndex} name={player.name} />}
     </div>
   );
 }
