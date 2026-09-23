@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three/webgpu';
 import { WebGLRenderer } from 'three';
@@ -32,27 +33,37 @@ export type TableSceneState = {
 type Backend = 'WebGPU' | 'WebGL2' | '2D';
 
 /** Decorative GPU scenery. Gameplay never depends on the renderer being available. */
-export default function Scene({ intensity = 1, active = true, cardSkin = 'recolored', placement = 'ambient', game, onReady }: SceneProps) {
+export default function Scene({ intensity = 1, active = true, placement = 'ambient', game, onReady }: SceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const settingsRef = useRef({ intensity, active, cardSkin, placement, game });
+  const settingsRef = useRef({ intensity, active });
   const readyRef = useRef(onReady);
   const invalidateRef = useRef<() => void>(() => undefined);
+  const wakeRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
-    settingsRef.current = { intensity, active, cardSkin, placement, game };
-    readyRef.current = onReady;
+    settingsRef.current = { intensity, active };
     invalidateRef.current();
-  }, [intensity, active, cardSkin, placement, game, onReady]);
+  }, [intensity, active]);
+  useEffect(() => { readyRef.current = onReady; }, [onReady]);
+  useEffect(() => { wakeRef.current(); }, [game?.eventId, game?.effectId, game?.phase, game?.turn]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    if (!active) {
+      host.dataset.backend = '2D';
+      host.dataset.animating = 'false';
+      readyRef.current?.('2D');
+      return;
+    }
 
     let disposed = false;
     let initialized = false;
     let frame = 0;
+    let wakeTimer = 0;
     let previousTime = 0;
     let elapsed = 0;
+    let lastActivity = performance.now();
     let renderer: THREE.WebGPURenderer | WebGLRenderer | undefined;
     let resizeObserver: ResizeObserver | undefined;
     const geometries = new Set<THREE.BufferGeometry>();
@@ -192,23 +203,28 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
     const fallback = () => {
       initialized = false;
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(wakeTimer);
       frame = 0;
+      wakeTimer = 0;
       releaseScene();
       releaseRenderer(renderer);
       renderer = undefined;
       announce('2D');
     };
-    let lastRenderTime = 0;
-    const frameInterval = 1000 / 30;
+    const frameInterval = 1000 / 12;
+    const idleAfter = 10_000;
+    const scheduleNext = () => {
+      if (disposed || wakeTimer || frame) return;
+      wakeTimer = window.setTimeout(() => {
+        wakeTimer = 0;
+        if (!disposed) frame = window.requestAnimationFrame(draw);
+      }, frameInterval);
+    };
     const draw = (time: number) => {
       frame = 0;
       if (disposed || !initialized || !renderer) return;
-      const moving = settingsRef.current.active && !reducedMotion.matches && !document.hidden;
-      if (moving && lastRenderTime && time - lastRenderTime < frameInterval) {
-        frame = window.requestAnimationFrame(draw);
-        return;
-      }
-      lastRenderTime = time;
+      const moving = settingsRef.current.active && !reducedMotion.matches && !document.hidden && time - lastActivity < idleAfter;
+      host.dataset.animating = String(moving);
       const delta = previousTime ? Math.min((time - previousTime) / 1000, 0.05) : 0;
       previousTime = time;
       if (moving) elapsed += delta;
@@ -245,17 +261,25 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       orbitMaterials.forEach((ringMaterial, i) => { ringMaterial.opacity = (0.13 - i * 0.009) * strength; });
       try {
         renderer.render(scene, camera);
+        if (import.meta.env.DEV) host.dataset.renderCount = String(Number(host.dataset.renderCount || 0) + 1);
       } catch (error) {
         console.error('[hanafudakan] ambient scene render failed', error);
         fallback();
         return;
       }
-      if (moving) frame = window.requestAnimationFrame(draw);
+      if (moving) scheduleNext();
     };
     const invalidate = () => {
-      if (!disposed && initialized && !frame) frame = window.requestAnimationFrame(draw);
+      if (disposed || !initialized) return;
+      window.clearTimeout(wakeTimer);
+      wakeTimer = 0;
+      if (!frame) frame = window.requestAnimationFrame(draw);
     };
     invalidateRef.current = invalidate;
+    const wake = () => { lastActivity = performance.now(); previousTime = 0; invalidate(); };
+    wakeRef.current = wake;
+    document.addEventListener('pointerdown', wake, { passive: true });
+    document.addEventListener('keydown', wake);
     const resize = () => {
       if (disposed || !renderer) return;
       const width = Math.max(1, host.clientWidth);
@@ -267,13 +291,15 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       renderer.setSize(width, height, false);
       invalidate();
     };
-    const onMotionPreference = () => { previousTime = 0; invalidate(); };
+    const onMotionPreference = () => wake();
     const onVisibility = () => {
       previousTime = 0;
       if (document.hidden) {
         window.cancelAnimationFrame(frame);
+        window.clearTimeout(wakeTimer);
         frame = 0;
-      } else invalidate();
+        wakeTimer = 0;
+      } else wake();
     };
     reducedMotion.addEventListener('change', onMotionPreference);
     document.addEventListener('visibilitychange', onVisibility);
@@ -339,21 +365,25 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       disposed = true;
       initialized = false;
       invalidateRef.current = () => undefined;
+      wakeRef.current = () => undefined;
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(wakeTimer);
       resizeObserver?.disconnect();
       reducedMotion.removeEventListener('change', onMotionPreference);
       document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('pointerdown', wake);
+      document.removeEventListener('keydown', wake);
       releaseScene();
       releaseRenderer(renderer);
     };
-  }, []);
+  }, [active]);
 
   return (
     <div
       ref={hostRef}
       className={`ambient-scene ${placement === 'table' ? 'table-scene' : ''}`}
       aria-hidden="true"
-      style={{ position: placement === 'table' ? 'absolute' : 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 0,
+      style={{ position: placement === 'table' ? 'absolute' : 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: placement === 'table' ? 0 : -1,
         background: 'radial-gradient(ellipse at 18% 35%, #102b21 0%, transparent 58%), radial-gradient(ellipse at 87% 74%, #211f12 0%, transparent 49%), #07110e' }}
     >
       <div style={{ position: 'absolute', inset: 0, zIndex: 0,

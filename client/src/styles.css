@@ -502,7 +502,6 @@ main {
     10px 25px 25px #0008,
     1px 0 0 2px #756346;
   transform-style: preserve-3d;
-  will-change: transform;
 }
 .hero-card img {
   width: 100%;
@@ -514,20 +513,20 @@ main {
   left: calc(50% - 167px);
   top: 73px;
   transform: rotate(-22deg);
-  animation: float-left 8s ease-in-out infinite;
+  animation: float-left 8s ease-in-out 2;
 }
 .hero-card-right {
   left: calc(50% + 26px);
   top: 61px;
   transform: rotate(23deg);
-  animation: float-right 9s ease-in-out infinite;
+  animation: float-right 9s ease-in-out 2;
 }
 .hero-card-front {
   left: calc(50% - 73px);
   top: 123px;
   transform: rotate(-6deg);
   z-index: 2;
-  animation: float-front 7s ease-in-out infinite;
+  animation: float-front 7s ease-in-out 2;
 }
 .art-caption {
   position: absolute;
@@ -1417,7 +1416,7 @@ main {
 .hyper-toggle small { display: block; margin-top: 2px; color: #849882; font-size: 9px; }
 .hyper-toggle > b { min-width: 31px; text-align: center; color: #8d9d89; font-size: 9px; letter-spacing: .08em; }
 .hyper-toggle.enabled { border-color: #efb95d; color: #f8d488; box-shadow: 0 0 20px rgba(220, 105, 46, .2), inset 0 0 18px rgba(248, 191, 84, .08); }
-.hyper-toggle.enabled .hyper-toggle-icon { color: #ffe4a0; border-color: #f5c369; box-shadow: 0 0 13px rgba(244, 181, 69, .55); animation: hyper-toggle-pulse 1.6s ease-in-out infinite; }
+.hyper-toggle.enabled .hyper-toggle-icon { color: #ffe4a0; border-color: #f5c369; box-shadow: 0 0 13px rgba(244, 181, 69, .55); animation: hyper-toggle-pulse 1.6s ease-in-out 2; }
 .hyper-toggle.enabled > b { color: #ffd67e; }
 @keyframes hyper-toggle-pulse { 50% { transform: scale(1.08) rotate(8deg); box-shadow: 0 0 21px rgba(244, 181, 69, .75); } }
 @media (prefers-reduced-motion: reduce) { .hyper-toggle.enabled .hyper-toggle-icon { animation: none; } }

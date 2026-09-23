@@ -96,5 +96,5 @@ export type PublicGameEvent = {
   capturedCards: number[][];
   deckCount: number;
   requiresChoice: boolean;
-  hyper?: Pick<HyperState, "chain" | "bloom" | "multiplier" | "hp"> | null;
+  hyper?: (Pick<HyperState, "chain" | "bloom" | "multiplier" | "hp"> & { counterDraw?: boolean }) | null;
 };

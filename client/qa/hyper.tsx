@@ -59,6 +59,12 @@ function Fixture() {
     <summary style={{ cursor: "pointer" }}>補助UI試験（合成局面）</summary>
     <div style={{ position: "absolute", top: "100%", left: 0, right: 0, padding: 8, display: "flex", gap: 8, flexWrap: "wrap", background: "#15251afa", borderBottom: "1px solid #9b8857" }}>
     <button className="button secondary compact" onClick={() => { setKey(k => k + 1); setRoom(before); }}>初期状態</button>
+    <button className="button secondary compact" onClick={() => { setKey(k => k + 1); setRoom({
+      ...before,
+      yaku: [[{ name: "タネ", points: 1 }], before.yaku[1]],
+      players: before.players.map((p, i) => i === 0 ? { ...p, captured: [4, 12, 16, 20, 24] } : p),
+      hyper: { ...before.hyper!, contracts: [[storm], []], stake: [5, 0], multiplier: [175, 100], projected: [11, 5], options: [] },
+    }); }}>あがり条件</button>
     <button className="button secondary compact" onClick={previewNextMusicTrack}>BGMを次の曲へ</button>
     {[8, 9, 10, 11, 12].map(count => <button key={count} className="button secondary compact" onClick={() => {
       setKey(k => k + 1);
@@ -73,6 +79,16 @@ function Fixture() {
       setAutoKo(true);
     }}>K.O.演出を再生</button>
     <button className="button secondary compact" onClick={() => setRoom(combo)}>3連鎖・HP減少を再生</button>
+    <button className="button secondary compact" onClick={() => {
+      const base = { ...reset, turn: 1, hyper: { ...reset.hyper!, chain: [3, 0] } };
+      setKey(k => k + 1);
+      setRoom(base);
+      window.setTimeout(() => setRoom({ ...base,
+        events: [{ id: 1, player: 1, source: "draw", cardId: 4, targetIds: [5], captured: true,
+          field: reset.field.filter(id => id !== 5), capturedCards: [[], [4, 5]], deckCount: 23,
+          requiresChoice: false, hyper: { chain: [3, 0], bloom: [0, 0], multiplier: [175, 100], hp: [18, 18], counterDraw: true } }],
+      }), 100);
+    }}>反撃めくりを再生</button>
     <button className="button secondary compact" onClick={() => setRoom({
       ...combo, hand: reset.hand,
       players: reset.players.map((p, i) => i === 1 ? { ...p, captured, handCount: 5 } : p),

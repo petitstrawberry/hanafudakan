@@ -550,6 +550,55 @@
   animation: petal-burst 1.8s ease-out both;
   animation-delay: calc(var(--petal-index) * 0.017s);
 }
+.yaku-celebration.is-counter {
+  background: radial-gradient(ellipse at 50% 38%, #1c66667d, transparent 48%);
+}
+.yaku-celebration.is-counter::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 33%;
+  width: 190px;
+  height: 190px;
+  border: 3px solid #cffff0;
+  border-radius: 50%;
+  box-shadow: 0 0 40px #64f9dd, inset 0 0 35px #4adfc4;
+  animation: counter-ring 1.5s ease-out both;
+}
+.yaku-celebration.is-counter > span {
+  top: 38%;
+  z-index: 1;
+  color: #effff5;
+  font-family: var(--serif);
+  font-weight: 800;
+  font-size: clamp(25px, 4vw, 44px);
+  letter-spacing: .08em;
+  text-shadow: 0 0 12px #65ffdc, 0 0 30px #24c9aa, 2px 3px 2px #091e1a;
+  background: linear-gradient(90deg, #0d3831d9, #0a2926f5 18%, #0a2926f5 82%, #0d3831d9);
+  border-block: 2px solid #9cf6d6;
+  box-shadow: 0 0 28px #47e2c866;
+  padding: 13px 28px;
+  animation: counter-call 1.8s ease-out both;
+}
+.yaku-celebration.is-counter i {
+  background: linear-gradient(135deg, #edfff0, #4de7c5);
+  box-shadow: 0 0 14px #87ffe4;
+}
+@keyframes counter-ring {
+  from { transform: translate(-50%, -50%) scale(.25); opacity: 0; }
+  20% { opacity: .95; }
+  to { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+}
+@keyframes counter-call {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(.72); }
+  12% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+  70% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(1.12); }
+}
+html[data-motion="false"] .yaku-celebration.is-counter::before { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .yaku-celebration.is-counter::before { display: none; }
+}
 .move-overlay {
   position: fixed;
   inset: 0;
@@ -1300,6 +1349,9 @@ html[data-motion="false"] .move-overlay * {
   z-index: 0;
   border-radius: 50%;
   background: radial-gradient(ellipse, rgba(245, 188, 76, .11), rgba(231, 86, 46, .045) 38%, transparent 72%);
+  opacity: .72;
+}
+.hyper-table:has(.table-scene[data-animating="true"])::after {
   animation: hyper-core 3.8s ease-in-out infinite;
 }
 .hyper-table .hana-card {

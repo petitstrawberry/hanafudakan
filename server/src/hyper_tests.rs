@@ -71,6 +71,104 @@ fn chain_survives_opponent_turn_but_breaks_on_a_captureless_own_turn() {
 }
 
 #[test]
+fn contracted_player_needs_a_role_at_least_as_large_as_the_largest_contract() {
+    let mut game = blank();
+    contract(&mut game, 0, "花見で一杯"); // 5 points
+    contract(&mut game, 0, "タネ"); // 1 point; thresholds do not add up
+    game.captured[0] = vec![4, 12, 16, 20, 24]; // タネ 1 point
+    game.phase = Phase::Decision;
+    assert_eq!(game.cashout_minimum(0), 5);
+    assert!(!game.can_cash_out(0));
+    assert!(game.decision(0, false).is_err());
+    assert_eq!(game.phase, Phase::Decision);
+    game.hands = [vec![0], vec![8]];
+    game.decision(0, true).unwrap();
+
+    let mut opponent = blank();
+    contract(&mut opponent, 0, "花見で一杯");
+    opponent.captured[1] = vec![4, 12, 16, 20, 24];
+    opponent.turn = 1;
+    opponent.phase = Phase::Decision;
+    assert!(opponent.can_cash_out(1));
+    opponent.decision(1, false).unwrap();
+    assert_eq!(opponent.winner, Some(1));
+
+    let mut met = blank();
+    contract(&mut met, 0, "花見で一杯");
+    contract(&mut met, 0, "青短");
+    met.captured[0] = vec![8, 32]; // 花見で一杯 5 points
+    met.phase = Phase::Decision;
+    assert_eq!(met.cashout_minimum(0), 5);
+    met.decision(0, false).unwrap();
+    assert_eq!(met.winner, Some(0));
+}
+
+#[test]
+fn defender_draws_once_after_opponent_reaches_three_chain() {
+    let mut game = blank();
+    contract(&mut game, 1, "猪鹿蝶");
+    game.hyper_chain[1] = 3;
+    game.hands = [vec![0], vec![8]];
+    game.field = vec![1, 12];
+    game.deck = vec![13, 4];
+    game.play(0, 0, None).unwrap();
+    assert!(game.deck.is_empty());
+    assert_eq!(game.hyper_draws_used[0], 0); // reset at end of turn
+    assert!(game.captured[0].contains(&13));
+    assert!(!game.events[1].hyper.as_ref().unwrap().counter_draw);
+    assert!(game.events[2].hyper.as_ref().unwrap().counter_draw);
+    assert_eq!(serde_json::to_value(&game.events[2]).unwrap()["hyper"]["counterDraw"], true);
+    assert!(game.log.iter().any(|entry| entry.contains("反撃の追加めくり")));
+
+    let mut before_chain = blank();
+    contract(&mut before_chain, 1, "猪鹿蝶");
+    before_chain.hyper_chain[1] = 2;
+    before_chain.hands = [vec![0], vec![8]];
+    before_chain.field = vec![1, 12];
+    before_chain.deck = vec![13, 4];
+    before_chain.play(0, 0, None).unwrap();
+    assert_eq!(before_chain.deck, vec![13]);
+
+    let mut choice = blank();
+    contract(&mut choice, 1, "猪鹿蝶");
+    choice.hyper_chain[1] = 3;
+    choice.hands = [vec![0], vec![8]];
+    choice.field = vec![1, 12, 14];
+    choice.deck = vec![13, 4];
+    choice.play(0, 0, None).unwrap();
+    assert_eq!(choice.phase, Phase::DrawChoice);
+    assert!(choice.events.last().unwrap().hyper.as_ref().unwrap().counter_draw);
+    choice.choose(0, 12).unwrap();
+    assert!(choice.events.last().unwrap().hyper.as_ref().unwrap().counter_draw);
+}
+
+#[test]
+fn exhausted_below_threshold_can_recontract_or_draw() {
+    let mut game = blank();
+    contract(&mut game, 0, "花見で一杯");
+    game.captured[0] = vec![4, 12, 16, 20, 24];
+    game.hands = [vec![0], vec![]];
+    game.field = vec![1];
+    game.play(0, 0, None).unwrap();
+    assert_eq!(game.phase, Phase::Decision);
+    assert!(!game.can_cash_out(0));
+    assert!(game.hyper_options(0).iter().any(|option| option.role == "タネ"));
+    game.hyper(0, "タネ".into()).unwrap();
+    assert_eq!(game.phase, Phase::Play);
+
+    let mut no_option = blank();
+    contract(&mut no_option, 0, "花見で一杯");
+    contract(&mut no_option, 0, "タネ");
+    contract(&mut no_option, 0, "青短");
+    no_option.captured[0] = vec![4, 12, 16, 20, 24];
+    no_option.hands = [vec![0], vec![]];
+    no_option.field = vec![1];
+    no_option.play(0, 0, None).unwrap();
+    assert_eq!(no_option.phase, Phase::RoundEnd);
+    assert_eq!(no_option.winner, None);
+}
+
+#[test]
 fn every_engine_respects_global_extra_draw_budget() {
     let mut game = blank();
     for role in ["猪鹿蝶", "花見で一杯", "カス"] { contract(&mut game, 0, role); }

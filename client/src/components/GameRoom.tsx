@@ -470,6 +470,10 @@ export default function GameRoom({
     };
     const runEvent = async (event: PublicMove, epoch: number) => {
       const before = displayed.current;
+      if (event.hyper?.counterDraw && event.source === "draw") {
+        setCelebration("反撃 · 追加めくり");
+        playSound("hyper_chain");
+      }
       const placing = !event.captured && !event.requiresChoice;
       // Reserve exactly the appended field slot before measuring. This also
       // gives wrapping rows room to settle before the card starts travelling.
@@ -567,7 +571,7 @@ export default function GameRoom({
         hyper: hyperCharged,
       };
       setAnnouncement(
-        `${before.players[event.player]?.name || "プレイヤー"} · ${event.source === "hand" ? "手札から" : "山札から"} ${nameOf(event.cardId)}${event.requiresChoice ? " · 合わせる札を選択" : event.captured ? ` · ${event.targetIds.length + 1}枚獲得` : " · 場へ"}`,
+        `${event.hyper?.counterDraw ? "反撃！ " : ""}${before.players[event.player]?.name || "プレイヤー"} · ${event.source === "hand" ? "手札から" : "山札から"} ${nameOf(event.cardId)}${event.requiresChoice ? " · 合わせる札を選択" : event.captured ? ` · ${event.targetIds.length + 1}枚獲得` : " · 場へ"}`,
       );
       if (event.source === "draw") {
         setFlight(
@@ -954,6 +958,8 @@ export default function GameRoom({
     }
   };
   const points = (room.yaku[own] || []).reduce((sum, y) => sum + y.points, 0);
+  const cashoutMinimum = hyperMode ? Math.max(0, ...(hyperState?.contracts[own] || []).map((contract) => contract.points)) : 0;
+  const canCashOut = cashoutMinimum === 0 || (room.yaku[own] || []).some((role) => role.points >= cashoutMinimum);
   const multiplier = hyperMode
     ? (hyperState?.multiplier?.[own] ?? 100) / 100
     : (points >= 7 ? 2 : 1) * (room.koikoi[opponent] > 0 ? 2 : 1);
@@ -1049,7 +1055,7 @@ export default function GameRoom({
           >
             <Scene
               placement="table"
-              active={!ended && motionEnabled()}
+              active={!ended && room.phase === "play" && motionEnabled()}
               intensity={hyperMode ? 1.8 : 0.92}
               cardSkin={skin}
               game={
@@ -1346,18 +1352,20 @@ export default function GameRoom({
                           <small>文</small>
                         </strong>
                         <span>
-                          あがると獲得{multiplier > 1 && ` · ${multiplier}倍`}
+                          {canCashOut ? "あがると獲得" : `あがり条件：${cashoutMinimum}文以上の役`}{canCashOut && multiplier > 1 && ` · ${multiplier}倍`}
                         </span>
                       </div>
                       <p>
                         {hyperMode
-                          ? "ハイパー化：選んだ役だけを賭け金にし、双方の取り札を没収。48枚すべてを戻して再配布し、相手の手番へ。負け・流局では賭け金も失います。"
+                          ? canCashOut
+                            ? "ハイパー化：選んだ役だけを賭け金にし、双方の取り札を没収。48枚すべてを戻して再配布し、相手の手番へ。負け・流局では賭け金も失います。"
+                            : `契約者は${cashoutMinimum}文以上の役ができるまであがれません。こいこいか、別の役を契約してください。`
                           : exhausted ? "最後の手札です。あがって得点を確定しましょう。" : "ここであがる。それとも、もう一役。"}
                       </p>
                       <div>
                         <button
                           className="button secondary"
-                          disabled={locked}
+                          disabled={locked || !canCashOut}
                           onClick={() =>
                             submit({ type: "decision", koikoi: false })
                           }
@@ -1475,7 +1483,7 @@ export default function GameRoom({
                   </div>
                 )}
                 {celebration && (
-                  <div className="yaku-celebration" aria-hidden="true">
+                  <div className={`yaku-celebration ${celebration.startsWith("反撃") ? "is-counter" : ""}`} aria-hidden="true">
                     <span>{celebration}</span>
                     {Array.from({ length: 18 }, (_, index) => (
                       <i
@@ -1791,6 +1799,8 @@ function HyperPlayerStatus({ state, index, name }: {
           <div className="player-contract-popover">
             <strong>契約と連鎖</strong>
             <p>最初の獲得で追加めくり。取れた手番はCHAINを持ち越し、3連鎖ごとに追加めくりと倍率＋0.25。追加めくりは各手番4回まで。</p>
+            <p>未契約で相手が3CHAIN以上なら、自分の通常めくりの後に各手番1回だけ反撃めくり。山札が空なら発動しません。</p>
+            {contracts.length > 0 && <p>あがりには{Math.max(...contracts.map(c => c.points))}文以上の役が必要。複数契約時は最大値を採用。K.O.には適用しません。</p>}
             <p>倍率は契約・連鎖・こいこい・能力で上昇（最大×8）。賭け金と花力は勝った時だけ得点になります。</p>
             {contracts.map(c => <p key={c.id}><b>{c.name}</b> · {c.description}</p>)}
             {state.hp && <p>修羅場：双方が取得枚数ぶん攻撃。3連鎖以上は＋1。HP0でK.O.、役でのあがりも可能。</p>}

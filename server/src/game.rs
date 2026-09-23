@@ -29,6 +29,7 @@ pub struct HyperBeat {
     pub bloom: [u32; 2],
     pub multiplier: [u32; 2],
     pub hp: Option<[u8; 2]>,
+    pub counter_draw: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -163,6 +164,8 @@ pub struct Game {
     checkpoint: [u32; 2],
     hyper_captured: [u8; 2],
     forfeited_winner: Option<usize>,
+    #[cfg(test)]
+    balance_variant: u8,
 }
 
 impl Game {
@@ -213,6 +216,8 @@ impl Game {
             checkpoint: [0; 2],
             hyper_captured: [0; 2],
             forfeited_winner: None,
+            #[cfg(test)]
+            balance_variant: 3,
         };
         game.deal();
         game
@@ -282,6 +287,9 @@ impl Game {
             let points = total(&evaluate(&game.active_captured(player)));
             if points == 0 || points <= game.checkpoint[player] {
                 return Err("新しい役が成立していません。".into());
+            }
+            if !koikoi && !game.can_cash_out(player) {
+                return Err(format!("契約者のあがりには{}文以上の役が必要です。", game.cashout_minimum(player)));
             }
             if koikoi {
                 if game.exhausted() {
@@ -398,6 +406,39 @@ impl Game {
             .collect()
     }
 
+    fn cashout_minimum(&self, player: usize) -> u32 {
+        if !self.hyper || !self.use_cashout_threshold() { return 0; }
+        self.hyper_contracts[player].iter().map(|contract| contract.points).max().unwrap_or(0)
+    }
+
+    fn can_cash_out(&self, player: usize) -> bool {
+        let minimum = self.cashout_minimum(player);
+        minimum == 0 || evaluate(&self.active_captured(player))
+            .iter().any(|role| role.points >= minimum)
+    }
+
+    #[cfg(test)]
+    fn use_cashout_threshold(&self) -> bool { self.balance_variant != 0 && self.balance_variant != 2 }
+    #[cfg(not(test))]
+    fn use_cashout_threshold(&self) -> bool { true }
+
+    fn counter_draw_budget(&self, player: usize) -> u8 {
+        if !self.hyper || !self.hyper_contracts[player].is_empty()
+            || self.hyper_contracts[1 - player].is_empty() { return 0; }
+        let chain = self.hyper_chain[1 - player];
+        #[cfg(test)]
+        return match self.balance_variant {
+            0 | 1 => 0,
+            2 | 3 => u8::from(chain >= 3),
+            4 => 1,
+            5 => if chain >= 3 { 2 } else { 0 },
+            7 => 2,
+            _ => if chain >= 3 { 2 } else { 1 },
+        };
+        #[cfg(not(test))]
+        { u8::from(chain >= 3) }
+    }
+
     pub fn hyper(&mut self, player: usize, role: String) -> Result<(), String> {
         self.transaction(|game| {
             game.require_turn(player, Phase::Decision)?;
@@ -492,6 +533,12 @@ impl Game {
                 }
             }
             Phase::Decision => {
+                if self.hyper && !self.can_cash_out(player) && self.hands.iter().all(Vec::is_empty) {
+                    if let Some(option) = self.hyper_options(player).first() {
+                        let _ = self.hyper(player, option.role.clone());
+                    }
+                    return;
+                }
                 if self.hyper {
                     let options = self.hyper_options(player);
                     // Hyper化は取り札を捨てて契約を取る賭け。捨てる分が賭け金に
@@ -511,8 +558,8 @@ impl Game {
                 let points = total(&evaluate(&self.active_captured(player)));
                 // Take a substantial win; chase a small one only while enough
                 // hand cards remain to have a reasonable chance of improving.
-                let keep_going =
-                    points < 4 && self.hands[player].len() >= 3 && self.koikoi[1 - player] == 0;
+                let keep_going = !self.can_cash_out(player)
+                    || (points < 4 && self.hands[player].len() >= 3 && self.koikoi[1 - player] == 0);
                 let _ = self.decision(player, keep_going);
             }
             Phase::RoundEnd | Phase::Finished => {}
@@ -712,6 +759,16 @@ impl Game {
 
     fn finish_draw_chain(&mut self) {
         if self.finish_hyper_duel() { return; }
+        // A player without a contract gets one answer draw each turn once the
+        // opponent has built a three-capture chain. Its budget cannot recurse.
+        if self.hyper
+            && self.hyper_draws_used[self.turn] < self.counter_draw_budget(self.turn)
+            && self.hyper_pending_draws[self.turn] == 0
+            && !self.deck.is_empty()
+        {
+            self.hyper_pending_draws[self.turn] = 1;
+            self.push_log(format!("{}番手、反撃の追加めくり！", self.turn + 1));
+        }
         if self.hyper
             && self.hyper_pending_draws[self.turn] > 0
             && !self.deck.is_empty()
@@ -886,6 +943,10 @@ impl Game {
         let points = total(&evaluate(&self.active_captured(self.turn)));
         if points > self.checkpoint[self.turn] {
             self.phase = Phase::Decision;
+            if !self.can_cash_out(self.turn) && self.exhausted() && self.hyper_options(self.turn).is_empty() {
+                self.settle(None, 0);
+                return;
+            }
             self.push_log(format!("{}番手、役成立！ {}文。", self.turn + 1, points));
         } else {
             self.advance_turn();
@@ -985,6 +1046,9 @@ impl Game {
                 bloom: self.hyper_bloom,
                 multiplier: [self.hyper_multiplier(0), self.hyper_multiplier(1)],
                 hp: self.hyper_hp,
+                counter_draw: source != PublicGameEventSource::Hand
+                    && self.counter_draw_budget(player) > 0
+                    && self.hyper_draws_used[player] > 0,
             }),
         });
         if self.events.len() > 12 {
@@ -1203,6 +1267,7 @@ mod tests {
             checkpoint: [0; 2],
             hyper_captured: [0; 2],
             forfeited_winner: None,
+            balance_variant: 3,
         }
     }
 
