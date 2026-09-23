@@ -41,8 +41,15 @@ export type HyperState = {
   chain: number[];
   sealed: number[][];
   options: HyperOption[];
+  multiplier?: number[];
+  projected?: number[];
+  boosts?: number[];
+  hp?: number[] | null;
+  hpMax?: number;
 };
 export type RoomView = {
+  boardRevision?: number;
+  handTargets?: { cardId: number; targets: number[] }[];
   id: string;
   name: string;
   hostId: string;
@@ -89,4 +96,5 @@ export type PublicGameEvent = {
   capturedCards: number[][];
   deckCount: number;
   requiresChoice: boolean;
+  hyper?: Pick<HyperState, "chain" | "bloom" | "multiplier" | "hp"> | null;
 };

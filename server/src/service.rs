@@ -170,6 +170,8 @@ struct RoomSummary {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RoomView {
+    board_revision: u32,
+    hand_targets: Vec<crate::game::HandTargets>,
     id: String,
     name: String,
     host_id: String,
@@ -267,6 +269,8 @@ impl Room {
             })
             .collect();
         RoomView {
+            board_revision: game.map_or(0, |g| g.board_revision),
+            hand_targets: game.zip(mine).map_or_else(Vec::new, |(g, player)| g.hand_targets(player)),
             id: self.id.clone(),
             name: self.name.clone(),
             host_id: self.host_id.clone(),
@@ -1787,5 +1791,50 @@ mod tests {
         apply_command(room, &session, Command::Start).unwrap();
         assert!(room.next_cpu >= before + CPU_THINK_TIME);
         assert_eq!(CPU_THINK_TIME, Duration::from_millis(1500));
+    }
+
+    #[tokio::test]
+    async fn hyper_command_broadcasts_atomic_redeal_and_public_hp_without_private_cards() {
+        let state = AppState::default();
+        let router = app(state.clone(), "/nonexistent");
+        let token = session(&router, "契約者").await;
+        let (_, created) = request(router, "POST", "/api/rooms", Some(&token),
+            json!({"name":"Hyper reset","rounds":3,"mode":"cpu","hyper":true})).await;
+        let mut store = state.inner.lock().unwrap();
+        let session = store.sessions[&token].clone();
+        let room = store.rooms.get_mut(created["roomId"].as_str().unwrap()).unwrap();
+        let (tx, mut rx) = mpsc::channel(32);
+        room.connections.insert("test".into(), Connection { player_id: session.player_id.clone(), tx });
+        apply_command(room, &session, Command::Start).unwrap();
+        let game = room.game.as_mut().unwrap();
+        game.phase = Phase::Decision;
+        game.turn = 0;
+        game.hands = [vec![], vec![]];
+        game.field.clear();
+        game.captured = [vec![0, 8, 28], vec![1, 5, 9]];
+        game.deck = (0..48).filter(|c| ![0, 8, 28, 1, 5, 9].contains(c)).collect();
+        let revision = game.board_revision;
+        apply_command(room, &session, Command::Hyper { role: "三光".into() }).unwrap();
+        room.broadcast();
+        let message = rx.try_recv().unwrap();
+        let view = &message["room"];
+        assert_eq!(view["boardRevision"], revision + 1);
+        assert_eq!(view["deckCount"], 24);
+        assert_eq!(view["hand"].as_array().unwrap().len(), 8);
+        assert_eq!(view["field"].as_array().unwrap().len(), 8);
+        assert_eq!(view["hyper"]["stake"], json!([5, 0]));
+        assert_eq!(view["hyper"]["hp"], json!([18, 18]));
+        assert_eq!(view["hyper"]["multiplier"], json!([175, 100]));
+        assert_eq!(view["turn"], 1);
+        assert_eq!(view["events"], json!([]));
+        for player in view["players"].as_array().unwrap() {
+            assert_eq!(player["captured"], json!([]));
+            assert!(player.get("hand").is_none());
+        }
+        assert!(view.get("deck").is_none());
+        let spectator = serde_json::to_value(room.view("spectator")).unwrap();
+        assert_eq!(spectator["hand"], json!([]));
+        assert_eq!(spectator["handTargets"], json!([]));
+        assert_eq!(spectator["hyper"]["options"], json!([]));
     }
 }

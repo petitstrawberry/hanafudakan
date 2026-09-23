@@ -4,11 +4,39 @@
 //! owns this state; clients receive a view that hides the other hand and stock.
 
 use rand::seq::SliceRandom;
+use rand::{rngs::StdRng, SeedableRng};
 use serde::Serialize;
 
 const BRIGHTS: [u8; 5] = [0, 8, 28, 40, 44];
 const ANIMALS: [u8; 9] = [4, 12, 16, 20, 24, 29, 32, 36, 41];
 const RIBBONS: [u8; 10] = [1, 5, 9, 13, 17, 21, 25, 33, 37, 42];
+const HYPER_DRAW_LIMIT: u8 = 4;
+const DUEL_HP: u8 = 18;
+
+#[derive(Debug, Clone, Copy)]
+enum ResetPolicy {
+    All,
+    #[cfg(test)]
+    KeepOpponent,
+    #[cfg(test)]
+    KeepBestRole,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HyperBeat {
+    pub chain: [u8; 2],
+    pub bloom: [u32; 2],
+    pub multiplier: [u32; 2],
+    pub hp: Option<[u8; 2]>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandTargets {
+    pub card_id: u8,
+    pub targets: Vec<u8>,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +83,11 @@ pub struct HyperState {
     pub chain: [u8; 2],
     pub sealed: [Vec<u8>; 2],
     pub options: Vec<HyperOption>,
+    pub multiplier: [u32; 2],
+    pub projected: [u32; 2],
+    pub hp: Option<[u8; 2]>,
+    pub hp_max: u8,
+    pub boosts: [u8; 2],
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -80,10 +113,14 @@ pub struct PublicGameEvent {
     pub captured_cards: [Vec<u8>; 2],
     pub deck_count: usize,
     pub requires_choice: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hyper: Option<HyperBeat>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Game {
+    rng: StdRng,
+    reset_policy: ResetPolicy,
     /// Hyper is a ruleset layered on the same room/game protocol. Standard
     /// rooms leave this false and retain the original koi-koi scoring.
     pub hyper: bool,
@@ -107,6 +144,11 @@ pub struct Game {
     pub hyper_bloom: [u32; 2],
     pub hyper_chain: [u8; 2],
     pub hyper_sealed: [Vec<u8>; 2],
+    pub board_revision: u32,
+    pub hyper_hp: Option<[u8; 2]>,
+    hyper_boosts: [u8; 2],
+    hyper_turn_captures: [u8; 2],
+    hyper_miss_used: [bool; 2],
     hyper_pending_draws: [u8; 2],
     hyper_draws_used: [u8; 2],
     hyper_beast_used: [u8; 2],
@@ -125,8 +167,14 @@ pub struct Game {
 
 impl Game {
     pub fn new(rounds: u8) -> Self {
+        Self::with_rng(rounds, false, StdRng::from_entropy())
+    }
+
+    fn with_rng(rounds: u8, hyper: bool, rng: StdRng) -> Self {
         let mut game = Self {
-            hyper: false,
+            rng,
+            reset_policy: ResetPolicy::All,
+            hyper,
             rounds: rounds.clamp(1, 12),
             round: 1,
             dealer: 0,
@@ -146,6 +194,11 @@ impl Game {
             hyper_bloom: [0; 2],
             hyper_chain: [0; 2],
             hyper_sealed: [vec![], vec![]],
+            board_revision: 0,
+            hyper_hp: None,
+            hyper_boosts: [0; 2],
+            hyper_turn_captures: [0; 2],
+            hyper_miss_used: [false; 2],
             hyper_pending_draws: [0; 2],
             hyper_draws_used: [0; 2],
             hyper_beast_used: [0; 2],
@@ -166,9 +219,7 @@ impl Game {
     }
 
     pub fn new_hyper(rounds: u8) -> Self {
-        let mut game = Self::new(rounds);
-        game.hyper = true;
-        game
+        Self::with_rng(rounds, true, StdRng::from_entropy())
     }
 
     /// Seed a new match from the room's last event ID. Never rewind an active
@@ -197,9 +248,6 @@ impl Game {
     pub fn play(&mut self, player: usize, card: u8, target: Option<u8>) -> Result<(), String> {
         self.transaction(|game| {
             game.require_turn(player, Phase::Play)?;
-            if game.hyper && game.has_hyper_contract(player, "night") {
-                game.hyper_night_reorder(player);
-            }
             let index = game.hands[player]
                 .iter()
                 .position(|&held| held == card)
@@ -209,7 +257,7 @@ impl Game {
             game.hands[player].remove(index);
             let targets = game.capture_or_place(player, card, &matches, target);
             game.push_event(player, PublicGameEventSource::Hand, card, targets, false);
-            game.draw();
+            if !game.finish_hyper_duel() { game.draw(); }
             Ok(())
         })
     }
@@ -241,26 +289,12 @@ impl Game {
                 }
                 game.checkpoint[player] = points;
                 game.koikoi[player] += 1;
+                if game.hyper { game.add_hyper_boost(player, 2); }
                 game.push_log(format!("{}番手、こいこい！", player + 1));
                 game.advance_turn();
             } else {
                 let round_points = if game.hyper {
-                    let contracts = game.hyper_contracts[player].len() as f64;
-                    let multiplier = match contracts {
-                        0.0 => 1.0,
-                        1.0 => 1.8,
-                        2.0 => 3.0,
-                        _ => 5.0,
-                    };
-                    let chain = 1.0
-                        + 0.25
-                            * f64::from(
-                                game.hyper_chain[player].saturating_sub(2).min(4),
-                            );
-                    (((points + game.hyper_stake[player] + game.hyper_bloom[player]) as f64
-                        * multiplier
-                        * chain)
-                        .ceil()) as u32
+                    game.hyper_payout(player, 0)
                 } else {
                     let multiplier = if points >= 7 { 2 } else { 1 }
                         * if game.koikoi[1 - player] > 0 { 2 } else { 1 };
@@ -328,6 +362,13 @@ impl Game {
         }
     }
 
+    pub fn hand_targets(&self, player: usize) -> Vec<HandTargets> {
+        if self.phase != Phase::Play || self.turn != player { return vec![]; }
+        self.hands[player].iter().map(|&card_id| HandTargets {
+            card_id, targets: self.matching(card_id),
+        }).collect()
+    }
+
     pub fn yaku(&self) -> [Vec<Yaku>; 2] {
         [
             evaluate(&self.active_captured(0)),
@@ -336,7 +377,7 @@ impl Game {
     }
 
     pub fn hyper_options(&self, player: usize) -> Vec<HyperOption> {
-        if !self.hyper || player > 1 || self.phase != Phase::Decision {
+        if !self.hyper || player > 1 || self.turn != player || self.phase != Phase::Decision {
             return vec![];
         }
         let owned = self.hyper_contracts[player]
@@ -371,34 +412,20 @@ impl Game {
             if role_cards(&game.active_captured(player), &option.role).is_empty() {
                 return Err("Hyper化する札がありません。".into());
             }
-            // Hyper化は成立した役を賭け金へ移すこと。役の点数は勝った時に
-            // まとめて支払われる。代償として取り札は没収され、役以外の札は
-            // 破棄される。持ち越すとカス・タネのような積み上げ役が延々と
-            // 再成立してしまうため、ここで盤面から消す。
+            // Only the selected role is banked. Both capture piles lose their
+            // roles and return to the stock; the opponent gets the first turn.
+            // Existing stakes/contracts/HP persist, but a loss burns the stake.
             game.hyper_stake[player] += option.points;
-            game.captured[player].clear();
+            game.deck.append(&mut game.captured[player]);
             game.hyper_sealed[player].clear();
             game.hyper_contracts[player].push(option.contract.clone());
             game.checkpoint[player] = 0;
+            game.clear_opponent_for_reset(player);
             // 盤面を仕切り直す。両手札・場札・山札を集めて配り直す。
             game.hyper_reset_board();
-            if option.contract.id == "storm" {
-                game.hyper_storm_field();
-            }
-            if option.contract.id == "seal" {
-                let opponent = 1 - player;
-                if let Some(card) = game.captured[opponent]
-                    .iter()
-                    .copied()
-                    .filter(|card| !game.hyper_sealed[opponent].contains(card))
-                    .max_by_key(|card| card_value(*card))
-                {
-                    game.hyper_sealed[opponent].push(card);
-                    game.push_log(format!("封印、相手の{}を役判定から除外。", card));
-                }
-            }
-            if option.contract.id == "night" {
-                game.hyper_night_reorder(player);
+            if option.contract.id == "storm" && game.hyper_hp.is_none() {
+                game.hyper_hp = Some([DUEL_HP; 2]);
+                game.push_log("修羅場、両者HP18。取った枚数で攻撃、3連鎖から追加ダメージ！".into());
             }
             game.push_log(format!(
                 "{}番手、{}を効果『{}』へHyper化。賭け金{}、取り札は没収。{}。盤面を仕切り直し。",
@@ -421,6 +448,11 @@ impl Game {
             chain: self.hyper_chain,
             sealed: self.hyper_sealed.clone(),
             options: player.map(|index| self.hyper_options(index)).unwrap_or_default(),
+            multiplier: [self.hyper_multiplier(0), self.hyper_multiplier(1)],
+            projected: [self.hyper_payout(0, 0), self.hyper_payout(1, 0)],
+            hp: self.hyper_hp,
+            hp_max: DUEL_HP,
+            boosts: self.hyper_boosts,
         })
     }
 
@@ -469,7 +501,8 @@ impl Game {
                         option.points * 2 >= pile.saturating_sub(option.points)
                     })
                         && self.hyper_contracts[player].len() < 3
-                        && self.hands[player].len() >= 2
+                        && self.hyper_payout(player, 0) < 55
+                        && self.hyper_hp.is_none_or(|hp| hp[player] > 6)
                     {
                         let _ = self.hyper(player, option.role.clone());
                         return;
@@ -488,10 +521,9 @@ impl Game {
 
     fn deal(&mut self) {
         self.events.clear();
-        let mut rng = rand::thread_rng();
         loop {
             self.deck = (0..48).collect();
-            self.deck.shuffle(&mut rng);
+            self.deck.shuffle(&mut self.rng);
             self.hands = [vec![], vec![]];
             self.field.clear();
             for _ in 0..8 {
@@ -519,6 +551,11 @@ impl Game {
         self.hyper_bloom = [0; 2];
         self.hyper_chain = [0; 2];
         self.hyper_sealed = [vec![], vec![]];
+        self.board_revision = self.board_revision.saturating_add(1);
+        self.hyper_hp = None;
+        self.hyper_boosts = [0; 2];
+        self.hyper_turn_captures = [0; 2];
+        self.hyper_miss_used = [false; 2];
         self.hyper_captured = [0; 2];
         self.hyper_pending_draws = [0; 2];
         self.hyper_draws_used = [0; 2];
@@ -577,10 +614,9 @@ impl Game {
         if self.hyper
             && RIBBONS.contains(&card)
             && self.has_hyper_contract(self.turn, "chant")
+            && let Some(ribbon) = self.field.iter().copied().find(|other| RIBBONS.contains(other))
         {
-            if let Some(ribbon) = self.field.iter().copied().find(|other| RIBBONS.contains(other)) {
-                return vec![ribbon];
-            }
+            return vec![ribbon];
         }
         vec![]
     }
@@ -618,6 +654,11 @@ impl Game {
     ) -> Vec<u8> {
         if matches.is_empty() {
             self.field.push(card);
+            if self.hyper && self.has_hyper_contract(player, "night") && !self.hyper_miss_used[player] {
+                self.hyper_miss_used[player] = true;
+                self.add_hyper_boost(player, 2);
+                self.reserve_hyper_draw(player);
+            }
             return vec![];
         }
         let taken = if matches.len() == 3 {
@@ -634,11 +675,16 @@ impl Game {
             // contract. A Hyper room by itself is not an active chain state.
             if !self.hyper_contracts[player].is_empty() {
                 self.hyper_chain[player] = self.hyper_chain[player].saturating_add(1);
+                self.hyper_turn_captures[player] += 1;
             }
             let mut acquired = Vec::with_capacity(taken.len() + 1);
             acquired.push(card);
             acquired.extend(taken.iter().copied());
             self.queue_hyper_effects(player, &acquired);
+            if let Some(hp) = &mut self.hyper_hp {
+                let damage = acquired.len() as u8 + u8::from(self.hyper_chain[player] >= 3);
+                hp[1 - player] = hp[1 - player].saturating_sub(damage);
+            }
         }
         self.push_log(format!(
             "{}番手、{}月の札を{}枚獲得。",
@@ -665,6 +711,7 @@ impl Game {
     }
 
     fn finish_draw_chain(&mut self) {
+        if self.finish_hyper_duel() { return; }
         if self.hyper
             && self.hyper_pending_draws[self.turn] > 0
             && !self.deck.is_empty()
@@ -678,125 +725,164 @@ impl Game {
         }
     }
 
-    fn queue_hyper_effects(&mut self, player: usize, acquired: &[u8]) {
-        if !self.hyper || self.deck.is_empty() {
-            return;
+    fn add_hyper_boost(&mut self, player: usize, quarters: u8) {
+        self.hyper_boosts[player] = self.hyper_boosts[player].saturating_add(quarters).min(12);
+    }
+
+    // Hundredths avoid client/server floating-point rounding disagreements.
+    fn hyper_multiplier(&self, player: usize) -> u32 {
+        let base = [100, 175, 250, 350][self.hyper_contracts[player].len().min(3)];
+        let streak = u32::from(self.hyper_chain[player].min(12) / 2) * 25;
+        (base + streak + u32::from(self.hyper_boosts[player]) * 25).min(800)
+    }
+
+    fn hyper_payout(&self, player: usize, minimum: u32) -> u32 {
+        let roles = total(&evaluate(&self.active_captured(player))).max(minimum);
+        ((roles + self.hyper_stake[player] + self.hyper_bloom[player])
+            * self.hyper_multiplier(player)).div_ceil(100)
+    }
+
+    fn finish_hyper_duel(&mut self) -> bool {
+        if let Some(hp) = self.hyper_hp
+            && hp[1 - self.turn] == 0
+        {
+            self.hyper_pending_draws = [0; 2];
+            self.push_log(format!("{}番手、K.O.！修羅場を制圧。", self.turn + 1));
+            self.settle(Some(self.turn), self.hyper_payout(self.turn, 8));
+            return true;
         }
+        false
+    }
+
+    fn reserve_hyper_draw(&mut self, player: usize) -> bool {
+        if self.deck.is_empty()
+            || self.hyper_draws_used[player] + self.hyper_pending_draws[player] >= HYPER_DRAW_LIMIT
+        { return false; }
+        self.hyper_pending_draws[player] += 1;
+        true
+    }
+
+    fn queue_hyper_effects(&mut self, player: usize, acquired: &[u8]) {
+        if !self.hyper || self.hyper_contracts[player].is_empty() { return; }
         let animals = acquired.iter().any(|card| ANIMALS.contains(card));
         let ribbons = acquired.iter().any(|card| RIBBONS.contains(card));
-        let bright_or_cup = acquired
-            .iter()
-            .any(|card| BRIGHTS.contains(card) || *card == 32);
-        let chaff = acquired.iter().any(|card| {
-            *card == 32
-                || (!BRIGHTS.contains(card) && !ANIMALS.contains(card) && !RIBBONS.contains(card))
-        });
-        let has = |id: &str| self.hyper_contracts[player].iter().any(|contract| contract.id == id);
-        let mut reserve = |used: &mut u8, cap: u8| {
-            if *used < cap
-                && self.hyper_draws_used[player].saturating_add(self.hyper_pending_draws[player]) < 6
-            {
-                *used += 1;
-                self.hyper_pending_draws[player] += 1;
-            }
-        };
-        if animals && has("beast") { reserve(&mut self.hyper_beast_used[player], 3); }
-        if animals && has("hunt") { reserve(&mut self.hyper_hunt_used[player], 1); }
-        if ribbons && has("ink") { reserve(&mut self.hyper_ink_used[player], 1); }
-        if bright_or_cup && has("feast") { reserve(&mut self.hyper_feast_used[player], 2); }
-        if chaff && has("grass") && self.hyper_grass_used[player] < 3 {
+        let bright_or_cup = acquired.iter().any(|card| BRIGHTS.contains(card) || *card == 32);
+        let chaff = acquired.iter().any(|card| *card == 32
+            || (!BRIGHTS.contains(card) && !ANIMALS.contains(card) && !RIBBONS.contains(card)));
+        // Every contract gets a starter draw; specialised engines add to it.
+        if self.hyper_turn_captures[player] == 1 { self.reserve_hyper_draw(player); }
+        if animals && self.has_hyper_contract(player, "beast") && self.hyper_beast_used[player] < 3 {
+            self.hyper_beast_used[player] += 1;
+            self.reserve_hyper_draw(player);
+        }
+        if animals && self.has_hyper_contract(player, "hunt") && self.hyper_hunt_used[player] < 1 {
+            self.hyper_hunt_used[player] += 1;
+            self.add_hyper_boost(player, 1);
+            self.reserve_hyper_draw(player);
+        }
+        if ribbons && self.has_hyper_contract(player, "ink") && self.hyper_ink_used[player] < 2 {
+            self.hyper_ink_used[player] += 1;
+            self.reserve_hyper_draw(player);
+        }
+        if bright_or_cup && self.has_hyper_contract(player, "feast") && self.hyper_feast_used[player] < 2 {
+            self.hyper_feast_used[player] += 1;
+            self.hyper_bloom[player] += 2;
+            self.reserve_hyper_draw(player);
+        }
+        if chaff && self.has_hyper_contract(player, "grass") && self.hyper_grass_used[player] < 3 {
             self.hyper_grass_used[player] += 1;
             self.hyper_bloom[player] += 1;
+            if self.hyper_grass_used[player] == 2 { self.reserve_hyper_draw(player); }
         }
-        if self.hyper_chain[player] >= 4
-            && self.hyper_contracts[player].len() >= 2
-            && self.hyper_overdrive_used[player] == 0
-            && self.hyper_draws_used[player].saturating_add(self.hyper_pending_draws[player]) < 6
+        if self.has_hyper_contract(player, "seal") && self.hyper_turn_captures[player] <= 2 {
+            self.add_hyper_boost(player, 1);
+        }
+        if self.hyper_chain[player] >= 3 && self.hyper_chain[player].is_multiple_of(3)
+            && self.hyper_overdrive_used[player] < 2
         {
-            self.hyper_overdrive_used[player] = 1;
-            self.hyper_pending_draws[player] += 1;
-            self.push_log(format!("{}番手、CHAIN OVERDRIVE。追加めくり！", player + 1));
+            self.hyper_overdrive_used[player] += 1;
+            self.add_hyper_boost(player, 1);
+            if self.reserve_hyper_draw(player) {
+                self.push_log(format!("{}番手、{} CHAIN！追加めくり＆倍率上昇。", player + 1, self.hyper_chain[player]));
+            }
         }
     }
 
-    /// Hyper化の仕切り直し。両手札・場札・山札・めくり札を集めて配り直す。
-    /// 取り札は残る。完成した役は得点に数え続けられ、新しい役の上積みだけが
-    /// 次の成立判定になる。取り札が多いほど配れる枚数は減る。
+    /// Atomic redeal: both piles were confiscated into the stock before this
+    /// call. All 48 cards restart as 8 + 8 hands, 8 field and 24 stock.
+    /// Smaller synthetic/research pools reserve at least a quarter for draws.
     fn hyper_reset_board(&mut self) {
-        let mut pool: Vec<u8> = Vec::with_capacity(48);
-        pool.extend(self.hands[0].drain(..));
-        pool.extend(self.hands[1].drain(..));
-        pool.extend(self.field.drain(..));
-        pool.extend(self.deck.drain(..));
-        if let Some(card) = self.drawn_card.take() {
-            pool.push(card);
-        }
-        let pool_size = pool.len();
-        let mut rng = rand::thread_rng();
-        let mut attempt = 0;
+        let mut pool = Vec::with_capacity(48);
+        pool.append(&mut self.hands[0]);
+        pool.append(&mut self.hands[1]);
+        pool.append(&mut self.field);
+        pool.append(&mut self.deck);
+        if let Some(card) = self.drawn_card.take() { pool.push(card); }
+        let deal_count = (pool.len() / 4).min(8);
         loop {
-            pool.shuffle(&mut rng);
+            pool.shuffle(&mut self.rng);
             let mut stock = pool.clone();
             let mut hands = [vec![], vec![]];
             let mut field = vec![];
-            for _ in 0..8 {
-                if let Some(card) = stock.pop() {
-                    hands[0].push(card);
-                }
-                if let Some(card) = stock.pop() {
-                    hands[1].push(card);
-                }
-                if let Some(card) = stock.pop() {
-                    field.push(card);
-                }
+            for _ in 0..deal_count {
+                hands[0].push(stock.pop().unwrap());
+                hands[1].push(stock.pop().unwrap());
+                field.push(stock.pop().unwrap());
             }
             let mut counts = [0u8; 12];
-            for &card in &field {
-                counts[month(card)] += 1;
-            }
-            attempt += 1;
-            if !counts.contains(&4) || attempt >= 10 || pool_size < 12 {
+            for &card in &field { counts[month(card)] += 1; }
+            if !counts.contains(&4) {
                 self.hands = hands;
                 self.field = field;
                 self.deck = stock;
                 break;
             }
         }
-        for hand in &mut self.hands {
-            hand.sort_unstable();
-        }
-        self.push_log(format!(
-            "天変地異、盤面を仕切り直し。残り{}枚で再開。",
-            pool_size
-        ));
+        for hand in &mut self.hands { hand.sort_unstable(); }
+        self.events.clear();
+        self.board_revision += 1;
+        self.hyper_chain = [0; 2];
+        for player in 0..2 { self.reset_hyper_turn(player); }
+        self.push_log(format!("再配布！双方の手札{}枚・場{}枚・山札{}枚。", deal_count, deal_count, self.deck.len()));
     }
 
-    fn hyper_storm_field(&mut self) {
-        self.deck.extend(self.field.drain(..));
-        self.deck.shuffle(&mut rand::thread_rng());
-        let replacement_count = self.deck.len().min(8);
-        for _ in 0..replacement_count {
-            if let Some(card) = self.deck.pop() {
-                self.field.push(card);
-            }
+    fn clear_opponent_for_reset(&mut self, player: usize) {
+        let opponent = 1 - player;
+        let keep: Vec<u8> = match self.reset_policy {
+            ResetPolicy::All => vec![],
+            #[cfg(test)]
+            ResetPolicy::KeepOpponent => self.captured[opponent].clone(),
+            #[cfg(test)]
+            ResetPolicy::KeepBestRole => evaluate(&self.active_captured(opponent)).iter()
+                .max_by_key(|role| role.points)
+                .map(|role| role_cards(&self.active_captured(opponent), &role.name))
+                .unwrap_or_default(),
+        };
+        for card in self.captured[opponent].drain(..) {
+            if !keep.contains(&card) { self.deck.push(card); }
         }
-        self.push_log(format!("天変発動、場札を{}枚刷新。", self.field.len()));
+        self.captured[opponent] = keep;
+        self.hyper_sealed[opponent].clear();
+        self.checkpoint[opponent] = total(&evaluate(&self.active_captured(opponent)));
     }
 
-    fn hyper_night_reorder(&mut self, player: usize) {
-        if !self.has_hyper_contract(player, "night") || self.deck.len() < 2 {
-            return;
-        }
-        let count = self.deck.len().min(3);
-        let start = self.deck.len() - count;
-        let mut top = self.deck.split_off(start);
-        let shift = usize::from(self.hyper_captured[player]) % count;
-        top.rotate_left(shift);
-        self.deck.extend(top);
-        self.push_log(format!("夜見、山札の上{}枚を巡回。", count));
+    fn reset_hyper_turn(&mut self, player: usize) {
+        self.hyper_turn_captures[player] = 0;
+        self.hyper_miss_used[player] = false;
+        self.hyper_pending_draws[player] = 0;
+        self.hyper_draws_used[player] = 0;
+        self.hyper_beast_used[player] = 0;
+        self.hyper_feast_used[player] = 0;
+        self.hyper_hunt_used[player] = 0;
+        self.hyper_ink_used[player] = 0;
+        self.hyper_grass_used[player] = 0;
+        self.hyper_overdrive_used[player] = 0;
     }
 
     fn finish_turn(&mut self) {
+        if self.hyper && self.hyper_turn_captures[self.turn] == 0 {
+            self.hyper_chain[self.turn] = 0;
+        }
         let points = total(&evaluate(&self.active_captured(self.turn)));
         if points > self.checkpoint[self.turn] {
             self.phase = Phase::Decision;
@@ -812,17 +898,9 @@ impl Game {
 
     fn advance_turn(&mut self) {
         if self.hyper {
-            // CHAIN is the acquisition count for the current hand. It is used
-            // for this hand's Hyper score, then starts fresh on the next one.
-            self.hyper_chain[self.turn] = 0;
-            self.hyper_pending_draws[self.turn] = 0;
-            self.hyper_draws_used[self.turn] = 0;
-            self.hyper_beast_used[self.turn] = 0;
-            self.hyper_feast_used[self.turn] = 0;
-            self.hyper_hunt_used[self.turn] = 0;
-            self.hyper_ink_used[self.turn] = 0;
-            self.hyper_grass_used[self.turn] = 0;
-            self.hyper_overdrive_used[self.turn] = 0;
+            // The streak survives opponent turns; only a captureless own turn
+            // breaks it. Per-turn effect budgets must not survive a turn.
+            self.reset_hyper_turn(self.turn);
         }
         if self.exhausted() {
             // A previous koi-koi does not bank points: failure to improve before
@@ -902,6 +980,12 @@ impl Game {
             captured_cards: self.captured.clone(),
             deck_count: self.deck.len(),
             requires_choice,
+            hyper: self.hyper.then(|| HyperBeat {
+                chain: self.hyper_chain,
+                bloom: self.hyper_bloom,
+                multiplier: [self.hyper_multiplier(0), self.hyper_multiplier(1)],
+                hp: self.hyper_hp,
+            }),
         });
         if self.events.len() > 12 {
             self.events.remove(0);
@@ -911,17 +995,17 @@ impl Game {
 
 fn hyper_contract_for_role(role: &str) -> Option<HyperContract> {
     let (id, name, source, points, description) = match role {
-        "猪鹿蝶" => ("beast", "暴走", "猪鹿蝶", 5, "タネ取得で追加めくり"),
+        "猪鹿蝶" => ("beast", "暴走", "猪鹿蝶", 5, "タネ取得で追加めくり（各手番3回まで）"),
         "赤短" => ("chant", "詠唱", "赤短", 5, "短冊が月を越えて場札に結びつく"),
-        "青短" => ("seal", "封印", "青短", 5, "相手の取り札を一時封印"),
-        "花見で一杯" => ("feast", "宴", "花見酒", 5, "光・盃の取得で追加めくり"),
-        "月見で一杯" => ("night", "夜見", "月見酒", 5, "山札の上を見て並べ替える"),
+        "青短" => ("seal", "倍喰い", "青短", 5, "札を取るたび倍率＋0.25（各手番2回まで）。成長は再配布後も残る"),
+        "花見で一杯" => ("feast", "宴", "花見酒", 5, "光・盃の取得で追加めくり＆花力＋2（各手番2回まで）"),
+        "月見で一杯" => ("night", "逆転月", "月見酒", 5, "各手番最初の空振りで追加めくり＆倍率＋0.5。失敗を燃料にする"),
         "三光" | "雨四光" | "四光" | "五光" => {
-            ("storm", "天変", "光役", points_for_role(role), "場を刷新する")
+            ("storm", "修羅場", "光役", points_for_role(role), "双方HP18の殴り合い！取得枚数で攻撃、3連鎖から＋1。HP0でK.O.、役あがりも可能")
         }
-        "タネ" => ("hunt", "追猟", "タネ", 1, "タネ取得で追加めくり"),
-        "短冊" => ("ink", "連筆", "タン", 1, "短冊取得で追加めくり"),
-        "カス" => ("grass", "草生", "カス", 1, "カス取得で花力を蓄える"),
+        "タネ" => ("hunt", "追猟", "タネ", 1, "各手番最初のタネ取得で追加めくり＆倍率＋0.25"),
+        "短冊" => ("ink", "連筆", "タン", 1, "短冊取得で追加めくり（各手番2回まで）"),
+        "カス" => ("grass", "永久機関", "カス", 1, "カス取得で花力＋1（各手番3回まで）、2回目は追加めくり"),
         _ => return None,
     };
     Some(HyperContract {
@@ -1065,11 +1149,21 @@ fn evaluate(cards: &[u8]) -> Vec<Yaku> {
 }
 
 #[cfg(test)]
+#[path = "hyper_simulation.rs"]
+mod hyper_simulation;
+
+#[cfg(test)]
+#[path = "hyper_tests.rs"]
+mod hyper_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn fixture() -> Game {
         Game {
+            rng: StdRng::seed_from_u64(42),
+            reset_policy: ResetPolicy::All,
             hyper: false,
             rounds: 3,
             round: 1,
@@ -1090,6 +1184,11 @@ mod tests {
             hyper_bloom: [0; 2],
             hyper_chain: [0; 2],
             hyper_sealed: [vec![], vec![]],
+            board_revision: 0,
+            hyper_hp: None,
+            hyper_boosts: [0; 2],
+            hyper_turn_captures: [0; 2],
+            hyper_miss_used: [false; 2],
             hyper_pending_draws: [0; 2],
             hyper_draws_used: [0; 2],
             hyper_beast_used: [0; 2],
@@ -1135,6 +1234,7 @@ mod tests {
         assert_eq!(
             game.events[0],
             PublicGameEvent {
+                hyper: None,
                 id: 21,
                 player: 0,
                 source: PublicGameEventSource::Hand,
@@ -1150,6 +1250,7 @@ mod tests {
         assert_eq!(
             game.events[1],
             PublicGameEvent {
+                hyper: None,
                 id: 22,
                 player: 0,
                 source: PublicGameEventSource::Draw,
@@ -1213,6 +1314,7 @@ mod tests {
         assert_eq!(
             game.events[2],
             PublicGameEvent {
+                hyper: None,
                 id: 3,
                 player: 0,
                 source: PublicGameEventSource::Choice,
@@ -1296,11 +1398,11 @@ mod tests {
         assert!(game.captured[0].is_empty());
         assert_eq!(game.checkpoint[0], 0);
         assert_eq!(game.hyper_contracts[0][0].id, "beast");
-        // Five free cards are redealt round-robin: hand, hand, field.
+        // Eleven available cards, including the confiscated pile. Keep a stock.
         assert_eq!(game.hands[0].len(), 2);
         assert_eq!(game.hands[1].len(), 2);
-        assert_eq!(game.field.len(), 1);
-        assert!(game.deck.is_empty());
+        assert_eq!(game.field.len(), 2);
+        assert_eq!(game.deck.len(), 5);
         assert_eq!(game.phase, Phase::Play);
         assert_eq!(game.turn, 1);
         // An empty pile has nothing left to convert.
@@ -1337,7 +1439,7 @@ mod tests {
     }
 
     #[test]
-    fn storm_contract_refreshes_the_existing_field_without_touching_hand_count() {
+    fn storm_contract_starts_hp_duel_and_reserves_stock_after_reset() {
         let mut game = fixture();
         game.hyper = true;
         game.phase = Phase::Decision;
@@ -1349,12 +1451,11 @@ mod tests {
             1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 21, 22, 23, 25, 26,
         ];
         game.hyper(0, "三光".into()).unwrap();
-        // The reset gathered 24 free cards and redealt them evenly. The pile
-        // itself was discarded, so the field refresh is what fills it.
-        assert_eq!(game.hands[0].len(), 8);
-        assert_eq!(game.hands[1].len(), 8);
-        assert_eq!(game.field.len(), 8);
-        assert!(game.deck.is_empty());
+        assert_eq!(game.hands[0].len(), 6);
+        assert_eq!(game.hands[1].len(), 6);
+        assert_eq!(game.field.len(), 6);
+        assert_eq!(game.deck.len(), 9);
+        assert_eq!(game.hyper_hp, Some([DUEL_HP; 2]));
         assert!(game.hyper_contracts[0].iter().any(|contract| contract.id == "storm"));
         assert_eq!(game.hyper_stake[0], 5);
         assert!(game.captured[0].is_empty());

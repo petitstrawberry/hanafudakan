@@ -168,6 +168,18 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
         readyRef.current?.(backend);
       }
     };
+    let sceneReleased = false;
+    const releaseScene = () => {
+      if (sceneReleased) return;
+      sceneReleased = true;
+      // Material disposal notifies WebGPU's render-object/node caches. Keep
+      // those caches alive until all scene resources have been released.
+      dust.dispose();
+      geometries.forEach((resource) => resource.dispose());
+      materials.forEach((resource) => resource.dispose());
+      textures.forEach((resource) => resource.dispose());
+      scene.clear();
+    };
     const releaseRenderer = (target: THREE.WebGPURenderer | WebGLRenderer | undefined) => {
       if (!target) return;
       target.domElement.remove();
@@ -181,6 +193,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       initialized = false;
       window.cancelAnimationFrame(frame);
       frame = 0;
+      releaseScene();
       releaseRenderer(renderer);
       renderer = undefined;
       announce('2D');
@@ -323,12 +336,8 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       resizeObserver?.disconnect();
       reducedMotion.removeEventListener('change', onMotionPreference);
       document.removeEventListener('visibilitychange', onVisibility);
+      releaseScene();
       releaseRenderer(renderer);
-      dust.dispose();
-      geometries.forEach((resource) => resource.dispose());
-      materials.forEach((resource) => resource.dispose());
-      textures.forEach((resource) => resource.dispose());
-      scene.clear();
     };
   }, []);
 

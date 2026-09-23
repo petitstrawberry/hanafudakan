@@ -7,6 +7,7 @@ export default function CardArtCredit({ className = '' }: { className?: string }
       {' · '}<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noreferrer">CC BY-SA 4.0</a>
       {' · '}<a href="/cards-classic/ATTRIBUTION.md" target="_blank" rel="noreferrer">原色版の出典</a>
       {' · '}<a href="/cards/ATTRIBUTION.md" target="_blank" rel="noreferrer">リカラー版の出典</a>
+      {' · '}<a href="/music/credits.html" target="_blank" rel="noreferrer">BGM・音源クレジット</a>
     </p>
   );
 }

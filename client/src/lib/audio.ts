@@ -1,4 +1,4 @@
-export type SoundKind = 'click' | 'deal' | 'capture' | 'hyper_capture' | 'hyper_chain' | 'win' | 'koikoi' | 'hyper';
+export type SoundKind = 'click' | 'deal' | 'capture' | 'hyper_capture' | 'hyper_chain' | 'hp_hit' | 'ko_blast' | 'win' | 'koikoi' | 'hyper';
 
 let context: AudioContext | undefined;
 let muted = false;
@@ -16,7 +16,7 @@ export function setVolume(value: number): void {
 }
 
 function getAudio(): AudioContext | undefined {
-  // Called by playSound only from a player's interaction; autoplay stays silent.
+  // Effects and music share one context; autoplay waits for user activation.
   if (typeof window === 'undefined' || !window.AudioContext) return undefined;
   try {
     if (!context) {
@@ -33,6 +33,12 @@ function getAudio(): AudioContext | undefined {
     if (context.state === 'suspended') void context.resume().catch(() => undefined);
     return context;
   } catch { return undefined; }
+}
+
+/** Music shares the effects master, so the existing sound toggle mutes both. */
+export function getMusicOutput(): { audio: AudioContext; output: GainNode } | undefined {
+  const audio = getAudio();
+  return audio && master ? { audio, output: master } : undefined;
 }
 
 function tone(audio: AudioContext, frequency: number, at: number, duration: number, gain: number, type: OscillatorType = 'sine'): void {
@@ -121,6 +127,19 @@ export function playSound(kind: SoundKind): void {
         tone(audio, f * 1.5, at + i * 0.06, 0.25, 0.025, 'square');
       });
       tone(audio, 1760, at + 0.38, 1.1, 0.1, 'triangle');
+      break;
+    case 'hp_hit':
+      drum(audio, at, 0.8);
+      brush(audio, at, 0.16);
+      tone(audio, 98, at, 0.2, 0.18, 'sawtooth');
+      tone(audio, 784, at + 0.015, 0.1, 0.08, 'triangle');
+      break;
+    case 'ko_blast':
+      drum(audio, at, 1);
+      drum(audio, at + 0.16, 0.7);
+      brush(audio, at, 0.5);
+      [55, 82.41, 110].forEach(f => tone(audio, f, at, 0.85, 0.12, 'sawtooth'));
+      [293.66, 440, 587.33].forEach(f => tone(audio, f, at + 0.25, 1.5, 0.1, 'triangle'));
       break;
     case 'koikoi':
       drum(audio, at);
