@@ -32,7 +32,7 @@ import { playSound } from "../lib/audio";
 import { MUSIC_PLAYLISTS, setMusicMode } from "../lib/music";
 import MusicNowPlaying from "./MusicNowPlaying";
 import { getYakuStatuses } from "../lib/yakuStatus";
-import { boardChanged, captureTargets } from "../lib/hyperGame";
+import { boardChanged, canCashOutWithContracts, captureTargets } from "../lib/hyperGame";
 import { fitFieldLayout } from "../lib/fieldLayout";
 import { reconcileFieldSlots, type FieldSlot } from "../lib/fieldSlots";
 import type { PublicGameEvent, RoomView } from "../lib/types";
@@ -315,9 +315,10 @@ export default function GameRoom({
     [onBackend],
   );
   const battleMusic = hyperState?.contracts.some(contracts => contracts.length > 0) ?? false;
+  const musicCue = `${room.id}:${room.status === "playing" ? room.round : 0}:${battleMusic ? "hyper" : "calm"}`;
   useEffect(() => {
     localStorage.setItem("hana-music", String(music));
-    const syncMusic = () => setMusicMode(music && connected && !ended && !document.hidden ? battleMusic ? "hyper" : "calm" : null);
+    const syncMusic = () => setMusicMode(music && connected && !ended && !document.hidden ? battleMusic ? "hyper" : "calm" : null, musicCue);
     syncMusic();
     document.addEventListener("pointerdown", syncMusic, { passive: true });
     document.addEventListener("keydown", syncMusic);
@@ -327,7 +328,7 @@ export default function GameRoom({
       document.removeEventListener("keydown", syncMusic);
       document.removeEventListener("visibilitychange", syncMusic);
     };
-  }, [music, connected, ended, battleMusic]);
+  }, [music, connected, ended, battleMusic, musicCue]);
   useEffect(() => () => setMusicMode(null), []);
 
   useEffect(() => {
@@ -959,7 +960,8 @@ export default function GameRoom({
   };
   const points = (room.yaku[own] || []).reduce((sum, y) => sum + y.points, 0);
   const cashoutMinimum = hyperMode ? Math.max(0, ...(hyperState?.contracts[own] || []).map((contract) => contract.points)) : 0;
-  const canCashOut = cashoutMinimum === 0 || (room.yaku[own] || []).some((role) => role.points >= cashoutMinimum);
+  const cashoutKoiReady = hyperState?.cashoutKoiReady?.[own] ?? room.koikoi[own] > 0;
+  const canCashOut = !hyperMode || canCashOutWithContracts(room.yaku[own] || [], hyperState?.contracts[own] || [], cashoutKoiReady);
   const multiplier = hyperMode
     ? (hyperState?.multiplier?.[own] ?? 100) / 100
     : (points >= 7 ? 2 : 1) * (room.koikoi[opponent] > 0 ? 2 : 1);
@@ -991,6 +993,15 @@ export default function GameRoom({
         }
       />
     );
+  const counterCelebration = celebration.startsWith("反撃");
+  const celebrationOverlay = celebration ? (
+    <div className={`yaku-celebration ${counterCelebration ? "is-counter counter-overlay" : ""}`} aria-hidden="true">
+      <span>{celebration}</span>
+      {Array.from({ length: 18 }, (_, index) => (
+        <i key={index} style={{ "--petal-index": index } as CSSProperties} />
+      ))}
+    </div>
+  ) : null;
 
   return (
     <section
@@ -1018,7 +1029,7 @@ export default function GameRoom({
           </span>
         </div>
         <div className="game-heading-actions">
-          <button className={`assist-toggle ${music ? "on" : ""}`} role="switch" aria-checked={music} aria-label="BGM" title={`${battleMusic ? "ハイパーBGM" : "通常BGM"}：${MUSIC_PLAYLISTS[battleMusic ? "hyper" : "calm"].length}曲メドレー`} onClick={() => setMusic(value => !value)}>
+          <button className={`assist-toggle ${music ? "on" : ""}`} role="switch" aria-checked={music} aria-label="BGM" title={`${battleMusic ? "ハイパーBGM" : "通常BGM"}：${MUSIC_PLAYLISTS[battleMusic ? "hyper" : "calm"].length}曲から選曲`} onClick={() => setMusic(value => !value)}>
             <Music2 size={14} />BGM
           </button>
           <button
@@ -1352,14 +1363,14 @@ export default function GameRoom({
                           <small>文</small>
                         </strong>
                         <span>
-                          {canCashOut ? "あがると獲得" : `あがり条件：${cashoutMinimum}文以上の役`}{canCashOut && multiplier > 1 && ` · ${multiplier}倍`}
+                          {canCashOut ? "あがると獲得" : `あがり条件：倍率前の役点合計が${cashoutMinimum}文超・最後の契約後にこいこい`}{canCashOut && multiplier > 1 && ` · ${multiplier}倍`}
                         </span>
                       </div>
                       <p>
                         {hyperMode
                           ? canCashOut
                             ? "ハイパー化：選んだ役だけを賭け金にし、双方の取り札を没収。48枚すべてを戻して再配布し、相手の手番へ。負け・流局では賭け金も失います。"
-                            : `契約者は${cashoutMinimum}文以上の役ができるまであがれません。こいこいか、別の役を契約してください。`
+                            : `契約者は倍率前の役点合計が${cashoutMinimum}文を超え、最後の契約後にこいこいするまであがれません。別の役の契約は可能です。`
                           : exhausted ? "最後の手札です。あがって得点を確定しましょう。" : "ここであがる。それとも、もう一役。"}
                       </p>
                       <div>
@@ -1482,17 +1493,7 @@ export default function GameRoom({
                     </div>
                   </div>
                 )}
-                {celebration && (
-                  <div className={`yaku-celebration ${celebration.startsWith("反撃") ? "is-counter" : ""}`} aria-hidden="true">
-                    <span>{celebration}</span>
-                    {Array.from({ length: 18 }, (_, index) => (
-                      <i
-                        key={index}
-                        style={{ "--petal-index": index } as CSSProperties}
-                      />
-                    ))}
-                  </div>
-                )}
+                {!counterCelebration && celebrationOverlay}
               </>
             )}
           </div>
@@ -1644,6 +1645,7 @@ export default function GameRoom({
           document.body,
         )}
       {flight && createPortal(<MoveOverlay flight={flight} />, document.body)}
+      {counterCelebration && celebrationOverlay && createPortal(celebrationOverlay, document.body)}
       {hpAttack && createPortal(<HpAttackOverlay key={`${hpAttack.sequence}:${hpAttack.stage}`} attack={hpAttack} />, document.body)}
       {dealCards.length > 0 && createPortal(<div className="opening-deal-overlay" aria-hidden="true">
         {dealCards.map((card, i) => <div key={i} className="opening-deal-card" style={{
@@ -1800,7 +1802,7 @@ function HyperPlayerStatus({ state, index, name }: {
             <strong>契約と連鎖</strong>
             <p>最初の獲得で追加めくり。取れた手番はCHAINを持ち越し、3連鎖ごとに追加めくりと倍率＋0.25。追加めくりは各手番4回まで。</p>
             <p>未契約で相手が3CHAIN以上なら、自分の通常めくりの後に各手番1回だけ反撃めくり。山札が空なら発動しません。</p>
-            {contracts.length > 0 && <p>あがりには{Math.max(...contracts.map(c => c.points))}文以上の役が必要。複数契約時は最大値を採用。K.O.には適用しません。</p>}
+            {contracts.length > 0 && <p>あがりには倍率前の役点合計が{Math.max(...contracts.map(c => c.points))}文を超え、最後の契約後にこいこいが必要（{state.cashoutKoiReady?.[index] ? "済" : "未"}）。複数契約時は最大値を採用。K.O.には適用しません。</p>}
             <p>倍率は契約・連鎖・こいこい・能力で上昇（最大×8）。賭け金と花力は勝った時だけ得点になります。</p>
             {contracts.map(c => <p key={c.id}><b>{c.name}</b> · {c.description}</p>)}
             {state.hp && <p>修羅場：双方が取得枚数ぶん攻撃。3連鎖以上は＋1。HP0でK.O.、役でのあがりも可能。</p>}

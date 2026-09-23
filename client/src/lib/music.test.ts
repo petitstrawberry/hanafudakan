@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 // @ts-expect-error Node built-ins are supplied by the test runner.
 import test from "node:test";
-import { createMusicPlayer, MUSIC_PLAYLISTS, musicRepeatCount, pickNextMusicIndex, type MusicMode, type MusicTrack } from "./music";
+import { createMusicPlayer, MUSIC_PLAYLISTS, pickNextMusicIndex, type MusicMode, type MusicTrack } from "./music";
 
 function deferred() {
   let resolve!: (value: AudioBuffer) => void;
@@ -16,7 +16,6 @@ function fixture() {
   const fallback: MusicMode[] = [];
   const announcements: (MusicTrack | null)[] = [];
   const requests = new Map<string, ReturnType<typeof deferred>>();
-  const watches = new Set<() => void>();
   let unlocked = true;
   const audio = {
     currentTime: 10, state: "running",
@@ -47,21 +46,15 @@ function fixture() {
     },
     fallback: mode => fallback.push(mode),
     onTrack: track => announcements.push(track),
-    watch: tick => { watches.add(tick); return () => { watches.delete(tick); }; },
   });
   const job = (mode: "calm" | "hyper", index = 0) => requests.get(MUSIC_PLAYLISTS[mode][index].url)!;
   const advance = async (seconds: number) => {
     audio.currentTime += seconds;
-    [...watches].forEach(tick => tick());
     await Promise.resolve(); await Promise.resolve();
   };
-  return { ...player, requests, job, advance, audio, sources, gains, fallback, announcements, watches,
+  return { ...player, requests, job, advance, audio, sources, gains, fallback, announcements,
     lock: () => { unlocked = false; }, unlock: () => { unlocked = true; } };
 }
-
-test("short songs repeat three/two times, longer songs once", () => {
-  assert.deepEqual([20, 44.9, 45, 68.8, 89.9, 90, 114].map(musicRepeatCount), [3, 3, 2, 2, 2, 1, 1]);
-});
 
 test("stopping during a download never starts a late track or credit", async () => {
   const f = fixture(); const pending = f.setMode("calm");
@@ -86,13 +79,13 @@ test("mode switches crossfade through separate buses and release old nodes", asy
   assert.deepEqual(f.gains[1].ramps.at(-1), { value: .24, at: 11.2 });
   f.sources[0].onended?.();
   assert.equal(f.sources[0].disconnected, true); assert.equal(f.gains[0].disconnected, true);
-  await f.setMode(null); assert.equal(f.sources[1].stopped, 10.85); assert.equal(f.watches.size, 0);
+  await f.setMode(null); assert.equal(f.sources[1].stopped, 10.85);
 });
 
 test("repeated gestures do not duplicate a pending or playing track", async () => {
   const f = fixture(); const pending = f.setMode("calm"); await f.setMode("calm");
   f.job("calm").resolve(); await pending; await f.setMode("calm");
-  assert.equal(f.sources.length, 1); assert.equal(f.watches.size, 1);
+  assert.equal(f.sources.length, 1);
 });
 
 test("audio stays locked until a user gesture can create the shared output", async () => {
@@ -101,13 +94,14 @@ test("audio stays locked until a user gesture can create the shared output", asy
   assert.equal(f.sources.length, 1);
 });
 
-test("short track finishes two loops before moving; credit changes only with the song", async () => {
-  const f = fixture(); const pending = f.setMode("calm"); f.job("calm").resolve(60); await pending;
-  f.job("calm", 1).resolve(60);
-  await f.advance(60); assert.equal(f.sources.length, 1); assert.equal(f.announcements.length, 1);
-  await f.advance(58.8); assert.equal(f.sources.length, 2);
-  assert.equal(f.announcements.at(-1), MUSIC_PLAYLISTS.calm[1]);
-  assert.equal(f.sources[0].stopped, 129.65);
+test("a song loops throughout the round without loading or announcing another song", async () => {
+  const f = fixture(); const pending = f.setMode("calm", "room:1:calm"); f.job("calm").resolve(60); await pending;
+  await f.advance(600);
+  await f.setMode("calm", "room:1:calm");
+  assert.equal(f.sources.length, 1);
+  assert.equal(f.sources[0].loop, true);
+  assert.equal(f.requests.size, 1);
+  assert.deepEqual(f.announcements, [MUSIC_PLAYLISTS.calm[0]]);
 });
 
 test("random selection covers every other song without immediate repeats", () => {
@@ -120,25 +114,47 @@ test("random selection covers every other song without immediate repeats", () =>
   assert.equal(pickNextMusicIndex(-1, 3, () => .9), 2);
 });
 
-test("medley uses its preloaded random song and does not repeat the current song", async () => {
-  const f = fixture(); const pending = f.setMode("calm"); f.job("calm").resolve(); await pending;
-  assert.ok(f.job("calm", 1)); f.job("calm", 1).resolve(); await f.next(); await f.next();
-  assert.deepEqual(f.announcements, [MUSIC_PLAYLISTS.calm[0], MUSIC_PLAYLISTS.calm[1], MUSIC_PLAYLISTS.calm[0]]);
+test("a new round selects another song and never repeats the previous one", async () => {
+  const f = fixture(); const first = f.setMode("calm", "room:1:calm"); f.job("calm").resolve(); await first;
+  const second = f.setMode("calm", "room:2:calm");
+  assert.equal(f.sources[0].stopped, null);
+  f.job("calm", 1).resolve(); await second;
+  assert.deepEqual(f.announcements, [MUSIC_PLAYLISTS.calm[0], MUSIC_PLAYLISTS.calm[1]]);
+  assert.equal(f.sources[0].stopped, 10.85);
+  await f.setMode("calm", "room:2:calm");
+  assert.equal(f.sources.length, 2);
 });
 
-test("pause resumes position and remaining repeat time instead of restarting song one", async () => {
-  const f = fixture(); const pending = f.setMode("calm"); f.job("calm").resolve(60); await pending;
-  f.job("calm", 1).resolve(60); await f.advance(65); await f.setMode(null);
-  await f.advance(100); await f.setMode("calm");
+test("leaving during a round-change download still selects the new round on return", async () => {
+  const f = fixture(); const first = f.setMode("calm", "room:1:calm"); f.job("calm").resolve(); await first;
+  const interrupted = f.setMode("calm", "room:2:calm");
+  await f.setMode(null);
+  f.job("calm", 1).resolve(); await interrupted;
+  assert.equal(f.sources.length, 1);
+  const resumed = f.setMode("calm", "room:2:calm"); await resumed;
+  assert.equal(f.sources.length, 2);
+  assert.equal(f.sources[1].offset, 0);
+  assert.equal(f.announcements.at(-1), MUSIC_PLAYLISTS.calm[1]);
+});
+
+test("pause resumes the same song at its loop position", async () => {
+  const f = fixture(); const pending = f.setMode("calm", "room:1:calm"); f.job("calm").resolve(60); await pending;
+  await f.advance(65); await f.setMode(null);
+  await f.advance(100); await f.setMode("calm", "room:1:calm");
   assert.equal(f.sources[1].offset, 5);
-  await f.advance(53.8); assert.equal(f.announcements.at(-1), MUSIC_PLAYLISTS.calm[1]);
+  assert.equal(f.requests.size, 1);
+  assert.equal(f.announcements.at(-1), MUSIC_PLAYLISTS.calm[0]);
 });
 
-test("slow download keeps previous loop alive; stopping invalidates pending next song", async () => {
-  const f = fixture(); const pending = f.setMode("hyper"); f.job("hyper").resolve(100); await pending;
-  await f.advance(100); assert.equal(f.sources[0].stopped, null);
-  await f.setMode(null); f.job("hyper", 1).resolve(); await Promise.resolve();
-  assert.equal(f.sources.length, 1); assert.equal(f.announcements.at(-1), null);
+test("Hyper entry changes music once; another contract does not interrupt it", async () => {
+  const f = fixture(); const calm = f.setMode("calm", "room:1:calm"); f.job("calm").resolve(); await calm;
+  const hyper = f.setMode("hyper", "room:1:hyper");
+  assert.equal(f.sources[0].stopped, null);
+  f.job("hyper").resolve(); await hyper;
+  await f.advance(200);
+  await f.setMode("hyper", "room:1:hyper");
+  assert.equal(f.sources.length, 2);
+  assert.equal(f.announcements.at(-1), MUSIC_PLAYLISTS.hyper[0]);
 });
 
 test("bad asset skips to another track; all failures fall back without retry storms", async () => {
@@ -149,12 +165,12 @@ test("bad asset skips to another track; all failures fall back without retry sto
   const g = fixture(); const failed = g.setMode("hyper");
   g.job("hyper").reject(new Error("offline")); await Promise.resolve();
   g.job("hyper", 1).reject(new Error("decode failed")); await failed;
-  assert.deepEqual(g.fallback, ["hyper"]); assert.equal(g.watches.size, 0);
+  assert.deepEqual(g.fallback, ["hyper"]);
   await g.setMode("hyper"); assert.equal(g.requests.size, 2);
 });
 
-test("suspended audio clock does not advance songs", async () => {
+test("suspended audio clock does not trigger a new track", async () => {
   const f = fixture(); const pending = f.setMode("hyper"); f.job("hyper").resolve(100); await pending;
-  f.job("hyper", 1).resolve(); f.audio.state = "suspended";
+  f.audio.state = "suspended";
   await f.advance(101); assert.equal(f.sources.length, 1);
 });

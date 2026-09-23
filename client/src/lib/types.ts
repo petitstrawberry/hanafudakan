@@ -44,6 +44,7 @@ export type HyperState = {
   multiplier?: number[];
   projected?: number[];
   boosts?: number[];
+  cashoutKoiReady?: boolean[];
   hp?: number[] | null;
   hpMax?: number;
 };

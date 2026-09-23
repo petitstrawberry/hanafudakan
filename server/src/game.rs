@@ -89,6 +89,7 @@ pub struct HyperState {
     pub hp: Option<[u8; 2]>,
     pub hp_max: u8,
     pub boosts: [u8; 2],
+    pub cashout_koi_ready: [bool; 2],
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -142,6 +143,7 @@ pub struct Game {
     pub round_points: u32,
     pub hyper_contracts: [Vec<HyperContract>; 2],
     pub hyper_stake: [u32; 2],
+    hyper_cashout_koi_ready: [bool; 2],
     pub hyper_bloom: [u32; 2],
     pub hyper_chain: [u8; 2],
     pub hyper_sealed: [Vec<u8>; 2],
@@ -194,6 +196,7 @@ impl Game {
             round_points: 0,
             hyper_contracts: [vec![], vec![]],
             hyper_stake: [0; 2],
+            hyper_cashout_koi_ready: [false; 2],
             hyper_bloom: [0; 2],
             hyper_chain: [0; 2],
             hyper_sealed: [vec![], vec![]],
@@ -289,14 +292,15 @@ impl Game {
                 return Err("新しい役が成立していません。".into());
             }
             if !koikoi && !game.can_cash_out(player) {
-                return Err(format!("契約者のあがりには{}文以上の役が必要です。", game.cashout_minimum(player)));
+                return Err(format!("契約者のあがりには倍率前の役点合計が{}文を超え、最後の契約後にこいこいが必要です。", game.cashout_minimum(player)));
             }
             if koikoi {
                 if game.exhausted() {
                     return Err("最後の札です。「勝負」で得点を確定してください。".into());
                 }
                 game.checkpoint[player] = points;
-                game.koikoi[player] += 1;
+                game.koikoi[player] = game.koikoi[player].saturating_add(1);
+                game.hyper_cashout_koi_ready[player] = true;
                 if game.hyper { game.add_hyper_boost(player, 2); }
                 game.push_log(format!("{}番手、こいこい！", player + 1));
                 game.advance_turn();
@@ -413,8 +417,17 @@ impl Game {
 
     fn can_cash_out(&self, player: usize) -> bool {
         let minimum = self.cashout_minimum(player);
-        minimum == 0 || evaluate(&self.active_captured(player))
-            .iter().any(|role| role.points >= minimum)
+        minimum == 0 || (total(&evaluate(&self.active_captured(player))) > minimum
+            && self.cashout_koi_ready(player))
+    }
+
+    fn cashout_koi_ready(&self, player: usize) -> bool {
+        if self.hyper_contracts[player].is_empty() { return true; }
+        #[cfg(test)]
+        if self.balance_variant == 8 { return true; }
+        #[cfg(test)]
+        if self.balance_variant == 9 { return self.koikoi[player] > 0; }
+        self.hyper_cashout_koi_ready[player]
     }
 
     #[cfg(test)]
@@ -429,7 +442,7 @@ impl Game {
         #[cfg(test)]
         return match self.balance_variant {
             0 | 1 => 0,
-            2 | 3 => u8::from(chain >= 3),
+            2 | 3 | 8 | 9 | 10 => u8::from(chain >= 3),
             4 => 1,
             5 => if chain >= 3 { 2 } else { 0 },
             7 => 2,
@@ -459,6 +472,11 @@ impl Game {
             game.hyper_stake[player] += option.points;
             game.deck.append(&mut game.captured[player]);
             game.hyper_sealed[player].clear();
+            #[cfg(test)]
+            let keep_first_koi = game.balance_variant == 10 && !game.hyper_contracts[player].is_empty();
+            #[cfg(not(test))]
+            let keep_first_koi = false;
+            if !keep_first_koi { game.hyper_cashout_koi_ready[player] = false; }
             game.hyper_contracts[player].push(option.contract.clone());
             game.checkpoint[player] = 0;
             game.clear_opponent_for_reset(player);
@@ -494,6 +512,7 @@ impl Game {
             hp: self.hyper_hp,
             hp_max: DUEL_HP,
             boosts: self.hyper_boosts,
+            cashout_koi_ready: [self.cashout_koi_ready(0), self.cashout_koi_ready(1)],
         })
     }
 
@@ -595,6 +614,7 @@ impl Game {
         self.checkpoint = [0; 2];
         self.hyper_contracts = [vec![], vec![]];
         self.hyper_stake = [0; 2];
+        self.hyper_cashout_koi_ready = [false; 2];
         self.hyper_bloom = [0; 2];
         self.hyper_chain = [0; 2];
         self.hyper_sealed = [vec![], vec![]];
@@ -1245,6 +1265,7 @@ mod tests {
             round_points: 0,
             hyper_contracts: [vec![], vec![]],
             hyper_stake: [0; 2],
+            hyper_cashout_koi_ready: [false; 2],
             hyper_bloom: [0; 2],
             hyper_chain: [0; 2],
             hyper_sealed: [vec![], vec![]],
@@ -1569,10 +1590,12 @@ mod tests {
         game.turn = 0;
         game.hyper_contracts[0].push(hyper_contract_for_role("猪鹿蝶").unwrap());
         game.hyper_stake[0] = 5;
-        game.captured[0] = vec![1, 5, 9];
+        game.koikoi[0] = 1;
+        game.hyper_cashout_koi_ready[0] = true;
+        game.captured[0] = vec![0, 8, 28, 44];
         game.decision(0, false).unwrap();
-        // (5 points of 赤短 + 5 stake) x 1.8 for a single contract.
-        assert_eq!(game.scores[0], 18);
+        // (8 points of 四光 + 5 stake) x 1.75 for a single contract, rounded up.
+        assert_eq!(game.scores[0], 23);
     }
 
     #[test]

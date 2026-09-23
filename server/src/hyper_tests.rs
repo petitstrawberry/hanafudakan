@@ -71,10 +71,10 @@ fn chain_survives_opponent_turn_but_breaks_on_a_captureless_own_turn() {
 }
 
 #[test]
-fn contracted_player_needs_a_role_at_least_as_large_as_the_largest_contract() {
+fn contracted_player_needs_combined_base_points_above_cost_and_a_post_contract_koi() {
     let mut game = blank();
     contract(&mut game, 0, "花見で一杯"); // 5 points
-    contract(&mut game, 0, "タネ"); // 1 point; thresholds do not add up
+    contract(&mut game, 0, "タネ"); // Costs do not add up; the largest is 5.
     game.captured[0] = vec![4, 12, 16, 20, 24]; // タネ 1 point
     game.phase = Phase::Decision;
     assert_eq!(game.cashout_minimum(0), 5);
@@ -93,14 +93,56 @@ fn contracted_player_needs_a_role_at_least_as_large_as_the_largest_contract() {
     opponent.decision(1, false).unwrap();
     assert_eq!(opponent.winner, Some(1));
 
+    let mut equal = blank();
+    contract(&mut equal, 0, "花見で一杯");
+    equal.captured[0] = vec![8, 32]; // Exactly 5 base points.
+    equal.hyper_boosts[0] = 12;
+    equal.koikoi[0] = 1;
+    equal.phase = Phase::Decision;
+    assert!(!equal.can_cash_out(0));
+
     let mut met = blank();
     contract(&mut met, 0, "花見で一杯");
     contract(&mut met, 0, "青短");
-    met.captured[0] = vec![8, 32]; // 花見で一杯 5 points
+    met.captured[0] = vec![8, 32, 1, 5, 9]; // Two 5-point roles combine to clear the cost.
+    met.hyper_boosts[0] = 10; // Multiplier is irrelevant to the threshold.
     met.phase = Phase::Decision;
     assert_eq!(met.cashout_minimum(0), 5);
+    assert!(!met.can_cash_out(0));
+    assert!(met.decision(0, false).unwrap_err().contains("最後の契約後にこいこい"));
+    met.hyper_cashout_koi_ready[0] = true;
+    assert!(met.can_cash_out(0));
     met.decision(0, false).unwrap();
     assert_eq!(met.winner, Some(0));
+}
+
+#[test]
+fn pre_contract_koi_does_not_unlock_cashout_and_recontracting_remains_available() {
+    let mut first = blank();
+    first.koikoi[0] = 1;
+    first.captured[0] = vec![8, 32];
+    first.phase = Phase::Decision;
+    first.hyper(0, "花見で一杯".into()).unwrap();
+    assert_eq!(first.koikoi[0], 1);
+    assert!(!first.cashout_koi_ready(0));
+    assert!(!first.hyper_state(Some(0)).unwrap().cashout_koi_ready[0]);
+
+    let mut game = blank();
+    game.koikoi[0] = 1;
+    contract(&mut game, 0, "花見で一杯");
+    game.captured[0] = vec![8, 32, 1, 5, 9]; // 10 base points
+    game.phase = Phase::Decision;
+    assert!(!game.can_cash_out(0));
+    assert!(game.hyper_options(0).iter().any(|option| option.role == "赤短"));
+    game.hyper_cashout_koi_ready[0] = true;
+    game.hyper(0, "赤短".into()).unwrap();
+    assert_eq!(game.hyper_contracts[0].len(), 2);
+    assert!(!game.cashout_koi_ready(0));
+    game.turn = 0;
+    game.captured[0] = vec![8, 32];
+    game.phase = Phase::Decision;
+    game.decision(0, true).unwrap();
+    assert!(game.cashout_koi_ready(0));
 }
 
 #[test]

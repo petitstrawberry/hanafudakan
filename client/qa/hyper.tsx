@@ -61,10 +61,12 @@ function Fixture() {
     <button className="button secondary compact" onClick={() => { setKey(k => k + 1); setRoom(before); }}>初期状態</button>
     <button className="button secondary compact" onClick={() => { setKey(k => k + 1); setRoom({
       ...before,
-      yaku: [[{ name: "タネ", points: 1 }], before.yaku[1]],
-      players: before.players.map((p, i) => i === 0 ? { ...p, captured: [4, 12, 16, 20, 24] } : p),
-      hyper: { ...before.hyper!, contracts: [[storm], []], stake: [5, 0], multiplier: [175, 100], projected: [11, 5], options: [] },
+      // The combined 10 base points clear the 5-point cost, but koi is still required.
+      hyper: { ...before.hyper!, contracts: [[storm], []], stake: [5, 0], multiplier: [175, 100], projected: [27, 5], cashoutKoiReady: [false, true], options: [] },
     }); }}>あがり条件</button>
+    <button className="button secondary compact" onClick={() => { setKey(k => k + 1); setRoom({
+      ...before, koikoi: [1, 0], hyper: { ...before.hyper!, contracts: [[storm], []], stake: [5, 0], multiplier: [225, 100], projected: [34, 5], cashoutKoiReady: [true, true], options: [] },
+    }); }}>こいこい後のあがり</button>
     <button className="button secondary compact" onClick={previewNextMusicTrack}>BGMを次の曲へ</button>
     {[8, 9, 10, 11, 12].map(count => <button key={count} className="button secondary compact" onClick={() => {
       setKey(k => k + 1);

@@ -553,6 +553,18 @@
 .yaku-celebration.is-counter {
   background: radial-gradient(ellipse at 50% 38%, #1c66667d, transparent 48%);
 }
+.yaku-celebration.is-counter.counter-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  border-radius: 0;
+  background: radial-gradient(ellipse at 50% 48%, #1c66667d, transparent 48%);
+}
+.yaku-celebration.is-counter.counter-overlay::before,
+.yaku-celebration.is-counter.counter-overlay > span,
+.yaku-celebration.is-counter.counter-overlay i {
+  top: 48%;
+}
 .yaku-celebration.is-counter::before {
   content: "";
   position: absolute;

@@ -1,4 +1,10 @@
-import type { RoomView } from "./types";
+import type { HyperContract, RoomView, Yaku } from "./types";
+
+export function canCashOutWithContracts(roles: Yaku[], contracts: HyperContract[], koiReady: boolean): boolean {
+  if (contracts.length === 0) return true;
+  const cost = Math.max(...contracts.map(contract => contract.points));
+  return koiReady && roles.reduce((sum, role) => sum + role.points, 0) > cost;
+}
 
 export function captureTargets(room: RoomView, cardId: number): number[] {
   if (room.phase === "draw_choice" && cardId === room.drawnCard)
