@@ -86,7 +86,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       blending: THREE.AdditiveBlending,
     }));
     const dust = new THREE.InstancedMesh(
-      geometry(new THREE.IcosahedronGeometry(0.016, 0)), dustMaterial, 160,
+      geometry(new THREE.IcosahedronGeometry(0.016, 0)), dustMaterial, 96,
     );
     dust.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     dust.frustumCulled = false;
@@ -104,7 +104,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.26,
         side: THREE.DoubleSide, depthWrite: false }),
     ));
-    const petals = Array.from({ length: 22 }, (_, i) => {
+    const petals = Array.from({ length: 12 }, (_, i) => {
       const petal = new THREE.Mesh(petalGeometry, petalMaterials[i % petalMaterials.length]);
       petal.scale.setScalar(0.4 + random(i + 80) * 0.85);
       scene.add(petal);
@@ -125,7 +125,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       }));
       orbitMaterials.push(ringMaterial);
       const ring = new THREE.Mesh(
-        geometry(new THREE.TorusGeometry(4.6 + i * 0.19, 0.008, 3, 220)), ringMaterial,
+        geometry(new THREE.TorusGeometry(4.6 + i * 0.19, 0.008, 3, 96)), ringMaterial,
       );
       ring.scale.y = 1.24;
       ring.rotation.set(i * 0.047, i * 0.038, i * 0.02);
@@ -198,10 +198,17 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       renderer = undefined;
       announce('2D');
     };
+    let lastRenderTime = 0;
+    const frameInterval = 1000 / 30;
     const draw = (time: number) => {
       frame = 0;
       if (disposed || !initialized || !renderer) return;
       const moving = settingsRef.current.active && !reducedMotion.matches && !document.hidden;
+      if (moving && lastRenderTime && time - lastRenderTime < frameInterval) {
+        frame = window.requestAnimationFrame(draw);
+        return;
+      }
+      lastRenderTime = time;
       const delta = previousTime ? Math.min((time - previousTime) / 1000, 0.05) : 0;
       previousTime = time;
       if (moving) elapsed += delta;
@@ -256,7 +263,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
       camera.aspect = width / height;
       camera.position.z = camera.aspect < 0.75 ? 20 : 15;
       camera.updateProjectionMatrix();
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1));
       renderer.setSize(width, height, false);
       invalidate();
     };
@@ -281,7 +288,7 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
 
       if (hasWebGPU) {
         try {
-          const webgpu = new THREE.WebGPURenderer({ antialias: true, alpha: true });
+          const webgpu = new THREE.WebGPURenderer({ antialias: false, alpha: true });
           await webgpu.init();
           candidate = webgpu;
         } catch (error) {
@@ -297,13 +304,13 @@ export default function Scene({ intensity = 1, active = true, cardSkin = 'recolo
         // getContext succeeds, which is false when GPU rendering is disabled.
         const canvas = document.createElement('canvas');
         let context: WebGL2RenderingContext | null = null;
-        try { context = canvas.getContext('webgl2', { antialias: true, alpha: true }); } catch { /* Unavailable. */ }
+        try { context = canvas.getContext('webgl2', { antialias: false, alpha: true }); } catch { /* Unavailable. */ }
         if (!context) {
           announce('2D');
           return;
         }
         try {
-          candidate = new WebGLRenderer({ canvas, antialias: true, alpha: true });
+          candidate = new WebGLRenderer({ canvas, antialias: false, alpha: true });
         } catch {
           releaseRenderer(candidate);
           announce('2D');
