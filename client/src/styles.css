@@ -1191,6 +1191,67 @@ main {
   line-height: 2;
   color: #9ea78f;
 }
+.hyper-guide-heading {
+  margin: 52px 0 16px;
+}
+.hyper-guide-lead {
+  color: #a8b399;
+  font-size: 12px;
+  line-height: 1.9;
+  margin-bottom: 22px;
+}
+.hyper-guide-steps,
+.hyper-contract-guide {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 15px;
+}
+.hyper-guide-steps article,
+.hyper-contract-guide article {
+  background: #1b291c;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 21px;
+}
+.hyper-guide-steps article > span,
+.hyper-contract-guide article > span {
+  color: var(--gold);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.hyper-guide-steps h3,
+.hyper-contract-guide h3 {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 500;
+  margin: 12px 0 8px;
+}
+.hyper-guide-steps p,
+.hyper-contract-guide p {
+  color: #a0ae97;
+  font-size: 11px;
+  line-height: 1.85;
+}
+.hyper-cashout-note {
+  background: #6f73321c;
+  border: 1px solid #85854745;
+  border-radius: 5px;
+  margin-top: 17px;
+  padding: 21px 24px;
+}
+.hyper-cashout-note > strong {
+  color: #e0c58c;
+  font-size: 13px;
+}
+.hyper-cashout-note p {
+  color: #b2bd9f;
+  font-size: 11px;
+  line-height: 1.9;
+  margin-top: 9px;
+}
+.hyper-contract-heading {
+  margin: 48px 0 22px;
+}
 .settings-card {
   border: 1px solid var(--line);
   border-radius: 6px;

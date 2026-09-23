@@ -89,6 +89,17 @@ const YAKU = [
     text: "かす札を10枚。以降1枚ごとに＋1文。盃はかすにも数える。",
   },
 ];
+const HYPER_CONTRACTS = [
+  { source: "猪鹿蝶", name: "暴走", effect: "タネを取ると追加めくり。各手番3回まで。" },
+  { source: "赤短", name: "詠唱", effect: "同月の場札がない短冊で、別月の短冊を取れる。" },
+  { source: "青短", name: "倍喰い", effect: "札を取るたび倍率＋0.25。各手番2回まで。" },
+  { source: "花見で一杯", name: "宴", effect: "光札・盃を取ると追加めくりと花力＋2。各手番2回まで。" },
+  { source: "月見で一杯", name: "逆転月", effect: "各手番最初の空振りで追加めくりと倍率＋0.5。" },
+  { source: "三光・雨四光・四光・五光", name: "修羅場", effect: "双方HP18で対決。取った枚数ぶん攻撃し、3連鎖以上はダメージ＋1。HP0でK.O.。" },
+  { source: "タネ", name: "追猟", effect: "各手番最初のタネ獲得で追加めくりと倍率＋0.25。" },
+  { source: "短冊", name: "連筆", effect: "短冊を取ると追加めくり。各手番2回まで。" },
+  { source: "カス", name: "永久機関", effect: "カスを取ると花力＋1。各手番3回まで、2回目は追加めくり。" },
+];
 function FlowerMark({ small = false }: { small?: boolean }) {
   return (
     <span className={`flower-mark ${small ? "small" : ""}`}>
@@ -1305,6 +1316,49 @@ function Guide({
             役の合計が7文以上で得点2倍。相手のこいこい後にあがるとさらに2倍。光役は最上位のみ採用し、両者の手札を使い切り、最後の手番で役の増点がなければ流局です。配札時の手四・くっつきは6文。こいこいの後は、役の点数が増えたときに再びあがれます。
           </p>
         </div>
+      </div>
+      <div className="section-heading hyper-guide-heading">
+        <div>
+          <div className="eyebrow">HYPER KOI-KOI</div>
+          <h2>役を賭けて、もう一局。</h2>
+        </div>
+      </div>
+      <p className="hyper-guide-lead">部屋を作るときにハイパーをONにすると、役ができた場面で「あがる」「こいこい」に加えて「ハイパー化」を選べます。通常部屋には適用されません。</p>
+      <div className="hyper-guide-steps">
+        <article>
+          <span>01 · 契約</span>
+          <h3>できた役をひとつ選ぶ</h3>
+          <p>選んだ役の点数が賭け金になり、その役に対応する契約効果を得ます。自分の他の役と相手の取り札は没収され、48枚すべてを山へ戻します。</p>
+        </article>
+        <article>
+          <span>02 · 再配布と連鎖</span>
+          <h3>札を配り直して相手から再開</h3>
+          <p>手札・場・山札を配り直します。契約側は手番最初の札獲得で追加めくりを得て、札を取るたびCHAINが伸びます。未契約の相手も3CHAIN以降は反撃めくりを得ます。</p>
+        </article>
+        <article>
+          <span>03 · 勝負</span>
+          <h3>契約後のあがりには条件あり</h3>
+          <p>契約は異なる種類を3つまで重ねられます。勝てば賭け金と花力も倍率に乗りますが、負け・流局では失います。契約後のあがりには下の条件が必要です。</p>
+        </article>
+      </div>
+      <div className="hyper-cashout-note">
+        <strong>契約者のあがり条件</strong>
+        <p>倍率をかける前の役点合計が、契約した役の点数の最大値を<strong>超える</strong>こと。さらに<strong>最後の契約後にこいこいを1回以上</strong>すること。5文の契約なら合計5文では足りず、6文以上が必要です。こいこい前でも別の契約はできますが、重ねた後に改めてこいこいが必要です。K.O.にはこの制限を適用しません。</p>
+      </div>
+      <div className="section-heading hyper-contract-heading">
+        <div>
+          <div className="eyebrow">NINE CONTRACTS</div>
+          <h2>契約と、その効果。</h2>
+        </div>
+      </div>
+      <div className="hyper-contract-guide">
+        {HYPER_CONTRACTS.map((contract) => (
+          <article key={contract.name}>
+            <span>{contract.source}から契約</span>
+            <h3>{contract.name}</h3>
+            <p>{contract.effect}</p>
+          </article>
+        ))}
       </div>
     </section>
   );
