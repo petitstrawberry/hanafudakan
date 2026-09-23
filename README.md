@@ -25,6 +25,14 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+GitHub Actions の CI が成功すると、`main` と `v` で始まるタグから `linux/amd64` のイメージを [GitHub Container Registry](https://ghcr.io) に公開します。`main` には `latest`、`main`、`sha-<コミットSHA>`、バージョンタグには `v1.2.3`、`1.2.3`、`1.2`、`sha-<コミットSHA>` を付けます。手動実行も `main` から可能です。PR とそれ以外のブランチでは公開しません。公開イメージを使う場合は次のように起動できます。
+
+```sh
+docker run --rm -p 127.0.0.1:3000:3000 ghcr.io/petitstrawberry/hanafudakan:latest
+```
+
+GHCR のパッケージが初回公開時に Private で作られた場合は、パッケージ設定で Public に変更すると認証なしで取得できます。イメージのソースはこのリポジトリに紐付けています。
+
 部屋・セッション・進行中の対戦はメモリ上に保持され、サーバーの再起動で消えます。公開設定と HTTPS の例は [セルフホスト手順](docs/self-hosting.md) を参照してください。
 
 手元の PC を一時的な HTTPS URL で共有する場合は `./scripts/share.sh start`、公開状態の確認は `./scripts/share.sh status`、停止は `./scripts/share.sh stop` です。Nix でビルドした専用サーバーを Cloudflare Quick Tunnel で公開します。公開中の画面だけを更新する場合は `./scripts/share.sh refresh-ui` を使うと、部屋と対戦を保持したまま新しい画面へ切り替えられます。
@@ -79,7 +87,7 @@ npm run build
 
 `flake.lock` でツールチェーン、`Cargo.lock` と `client/package-lock.json` で依存関係を固定します。[Nix の構成と更新手順](docs/nix.md)も参照してください。
 
-[GitHub Actions](.github/workflows/ci.yml) では Linux x86_64 上で `nix flake check` と `nix build .` を実行します。役の成立可能性を扱うクライアントのロジックテストも `nix flake check` に含まれ、手元では次のコマンドで個別に実行できます。テストランナーも `flake.lock` の nixpkgs に固定します。
+[GitHub Actions](.github/workflows/ci.yml) では Linux x86_64 上で `nix flake check` と `nix build .` を実行し、成功後に GHCR イメージをビルド・公開します。役の成立可能性を扱うクライアントのロジックテストも `nix flake check` に含まれ、手元では次のコマンドで個別に実行できます。テストランナーも `flake.lock` の nixpkgs に固定します。
 
 ```sh
 nix develop --command npm --prefix client test
