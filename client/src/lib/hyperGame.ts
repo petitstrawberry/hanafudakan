@@ -1,4 +1,4 @@
-import type { HyperContract, HyperDamage, RoomView, Yaku } from "./types";
+import type { HyperContract, HyperDamage, RoomView, TrapActivation, TrapKind, Yaku } from "./types";
 
 export function canCashOutWithContracts(roles: Yaku[], contracts: HyperContract[], koiReady: boolean): boolean {
   if (contracts.length === 0) return true;
@@ -44,5 +44,22 @@ export function damageBreakdown(hit: HyperDamage): string {
 
 export function previewFor(room: RoomView, card: number, target: number): HyperDamage[] {
   return room.hyper?.damagePreviews?.find(p => p.cardId === card && (p.targetId === target ||
-    captureTargets(room, card).length === 3))?.damage ?? [];
+    takesAllTargets(card, captureTargets(room, card))))?.damage ?? [];
+}
+
+
+export const trapEffects: Record<TrapKind, { name: string; description: string }> = {
+  levy: { name: "徴収", description: "相手の花力を最大4奪う" },
+  reveal: { name: "暴露", description: "相手の残り手札2枚を自分だけ見る（次の自分手番終了まで）" },
+  bind: { name: "足枷", description: "この取得から相手の手番終了まで倍率の永久成長を停止。CHAIN・めくりは継続" },
+};
+
+export function trapResult(hit: TrapActivation): string {
+  if (hit.kind === "levy") return `花力${hit.amount}を奪取`;
+  if (hit.kind === "reveal") return `残り手札${hit.amount}枚を罠の所有者へ開示`;
+  return "手番終了まで倍率成長を封印 · CHAIN継続";
+}
+
+export function takesAllTargets(card: number, targets: number[]): boolean {
+  return targets.length === 3 && targets.every(id => Math.floor(id / 4) === Math.floor(card / 4));
 }

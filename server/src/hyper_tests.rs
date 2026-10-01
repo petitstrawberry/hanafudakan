@@ -12,6 +12,7 @@ fn blank() -> Game {
 
 fn contract(game: &mut Game, player: usize, role: &str) {
     game.hyper_contracts[player].push(hyper_contract_for_role(role).unwrap());
+    if role == "雨四光" { game.hyper_trap_choices[player] = vec![TrapKind::Levy, TrapKind::Reveal]; }
 }
 
 #[test]
@@ -348,16 +349,16 @@ fn duel_uses_role_increases_once_and_light_upgrades_only_add_the_difference() {
 }
 
 #[test]
-fn simultaneous_roles_chain_and_zenith_obey_integer_caps_and_hp_clamping() {
+fn simultaneous_roles_chain_and_caps_distinguish_power_from_hp_loss() {
     let mut game = blank();
-    contract(&mut game, 0, "五光");
+    contract(&mut game, 0, "三光");
     game.hyper_hp = Some([32, 3]);
     game.hyper_chain[0] = 2;
     game.captured[0] = vec![0, 28, 1, 5, 33, 37];
-    game.field = vec![9];
-    game.capture_or_place(0, 8, &[9], None); // 三光 + 赤短 = 10 role damage.
+    game.field = vec![9,10,11];
+    game.capture_or_place(0, 8, &[9,10,11], None); // 三光 + 赤短 = 10 role damage.
     let hit = &game.hyper_damage[0];
-    assert_eq!((hit.roles, hit.chain, hit.contract, hit.power, hit.damage), (10, 1, 5, 16, 3));
+    assert_eq!((hit.roles, hit.chain, hit.contract, hit.power, hit.damage), (10, 1, 1, 16, 3));
     assert_eq!((hit.hp_before, hit.hp_after), (3, 0));
     assert!(game.log.iter().any(|line| line.contains("威力16 / HP減少3")));
     let before = vec![];
@@ -366,20 +367,14 @@ fn simultaneous_roles_chain_and_zenith_obey_integer_caps_and_hp_clamping() {
 }
 
 #[test]
-fn light_guard_only_blocks_first_hit_per_turn_and_zenith_has_real_risk() {
+fn non_storm_lights_do_not_change_combat_power_or_defense() {
     let mut game = blank();
     contract(&mut game, 1, "四光");
     contract(&mut game, 1, "五光");
     game.hyper_hp = Some([32; 2]);
     game.field = vec![1, 5];
     game.capture_or_place(0, 0, &[1], None);
-    assert_eq!((game.hyper_damage[0].exposure, game.hyper_damage[0].blocked, game.hyper_damage[0].power), (1, 2, 1));
-    game.capture_or_place(0, 4, &[5], None);
-    assert_eq!((game.hyper_damage[0].blocked, game.hyper_damage[0].power), (0, 3));
-    game.reset_hyper_turn(0);
-    game.field.push(9);
-    game.capture_or_place(0, 8, &[9], None);
-    assert_eq!(game.hyper_damage[0].blocked, 2);
+    assert_eq!((game.hyper_damage[0].exposure, game.hyper_damage[0].blocked, game.hyper_damage[0].power), (0, 0, 2));
 }
 
 #[test]
@@ -389,18 +384,18 @@ fn trap_is_public_atomic_once_per_turn_and_expires_without_redeal() {
     game.hands = [vec![8, 12], vec![16, 20]];
     game.field = vec![1, 5];
     let before = format!("{game:?}");
-    assert!(game.set_trap(0, 1, game.board_revision + 1).is_err());
-    assert!(game.set_trap(0, 2, game.board_revision).is_err());
-    assert!(game.set_trap(1, 1, game.board_revision).is_err());
+    assert!(game.set_trap(0, 1, game.board_revision + 1, TrapKind::Levy).is_err());
+    assert!(game.set_trap(0, 2, game.board_revision, TrapKind::Levy).is_err());
+    assert!(game.set_trap(1, 1, game.board_revision, TrapKind::Levy).is_err());
     assert_eq!(format!("{game:?}"), before);
     let turn = game.turn;
-    game.set_trap(0, 1, game.board_revision).unwrap();
+    game.set_trap(0, 1, game.board_revision, TrapKind::Levy).unwrap();
     assert_eq!(game.turn, turn);
     assert_eq!(game.phase, Phase::Play);
     assert_eq!(game.hyper_state(None).unwrap().traps, [Some(1), None]);
     assert!(!game.can_set_trap(0));
     let once = format!("{game:?}");
-    assert!(game.set_trap(0, 5, game.board_revision).is_err());
+    assert!(game.set_trap(0, 5, game.board_revision, TrapKind::Levy).is_err());
     assert_eq!(format!("{game:?}"), once);
     game.play(0, 8, None).unwrap();
     assert_eq!(game.hyper_traps[0], Some(1));
@@ -411,27 +406,19 @@ fn trap_is_public_atomic_once_per_turn_and_expires_without_redeal() {
 }
 
 #[test]
-fn trap_capture_can_knock_out_actor_or_both_and_stops_stock() {
-    for (hp, expected) in [([32, 3], Some(0)), ([2, 3], None)] {
+fn either_side_or_simultaneous_ko_stops_stock_and_settles() {
+    for (hp, expected) in [([32, 0], Some(0)), ([0, 32], Some(1)), ([0, 0], None)] {
         let mut game = blank();
-        contract(&mut game, 0, "雨四光");
         game.hyper_hp = Some(hp);
         game.turn = 1;
-        game.hands = [vec![8], vec![0]];
-        game.field = vec![1];
         game.deck = vec![12];
-        game.hyper_traps[0] = Some(1);
-        game.play(1, 0, None).unwrap();
+        game.hyper_pending_draws = [1, 2];
+        game.finish_draw_chain();
         assert_eq!(game.winner, expected);
         assert_eq!(game.phase, Phase::RoundEnd);
         assert_eq!(game.deck, vec![12]);
         assert_eq!(game.hyper_pending_draws, [0, 0]);
-        assert_eq!(game.hyper_traps, [None; 2]);
-        let damage = &game.events.last().unwrap().hyper.as_ref().unwrap().damage;
-        assert_eq!(damage.len(), 2);
-        assert_eq!(damage[1].kind, "trap");
-        assert_eq!(damage[1].defender, 1);
-        if expected.is_none() { assert_eq!(game.round_points, 0); assert_eq!(game.hyper_hp, Some([0, 0])); }
+        if expected.is_none() { assert_eq!(game.round_points, 0); }
     }
 }
 
@@ -455,7 +442,7 @@ fn preview_matches_capture_and_reveals_only_own_hand_or_exposed_draw_choice() {
     game.hyper_traps[0] = Some(30);
     game.turn = 0;
     game.phase = Phase::DrawChoice;
-    assert!(game.set_trap(0, 30, game.board_revision).is_err());
+    assert!(game.set_trap(0, 30, game.board_revision, TrapKind::Levy).is_err());
     game.hyper_reset_board();
     assert_eq!(game.hyper_traps, [None; 2]);
 }
@@ -466,7 +453,7 @@ fn own_trap_capture_disarms_without_damage_and_next_round_clears_trap_budgets() 
     contract(&mut game, 0, "雨四光");
     game.hyper_hp = Some([32; 2]);
     game.field = vec![1];
-    game.set_trap(0, 1, game.board_revision).unwrap();
+    game.set_trap(0, 1, game.board_revision, TrapKind::Levy).unwrap();
     game.capture_or_place(0, 0, &[1], None);
     assert_eq!(game.hyper_traps, [None; 2]);
     assert_eq!(game.hyper_damage.len(), 1);
@@ -475,7 +462,6 @@ fn own_trap_capture_disarms_without_damage_and_next_round_clears_trap_budgets() 
     game.next_round().unwrap();
     assert_eq!(game.hyper_trap_used, [false; 2]);
     assert_eq!(game.hyper_attack_used, [false; 2]);
-    assert_eq!(game.hyper_guard_used, [false; 2]);
 }
 
 #[test]
@@ -491,12 +477,12 @@ fn drawn_choice_previews_only_the_revealed_card_and_match_the_selected_trap_targ
     let previews = game.hyper_state(Some(0)).unwrap().damage_previews;
     assert_eq!(previews.len(), 2);
     assert!(previews.iter().all(|p| p.card_id == 0));
-    assert_eq!(previews[0].damage.len(), 2);
+    assert_eq!(previews[0].damage.len(), 1);
     assert_eq!(previews[1].damage.len(), 1);
     assert!(game.hyper_state(Some(1)).unwrap().damage_previews.is_empty());
     game.choose(0, 1).unwrap();
     assert_eq!(game.events.last().unwrap().hyper.as_ref().unwrap().damage, previews[0].damage);
-    assert_eq!(game.hyper_hp, Some([28, 30]));
+    assert_eq!(game.hyper_hp, Some([32, 30]));
 }
 
 #[test]
@@ -582,4 +568,170 @@ fn chain_reserves_only_one_extra_draw_per_turn_even_when_ink_crosses_two_milesto
     contract(&mut light, 1, "三光");
     light.hyper_chain[1] = 3;
     assert_eq!(light.counter_draw_budget(0), 0); // no automatic acceleration against a light contract
+}
+
+
+#[test]
+fn only_storm_enters_duel_and_other_light_contracts_preserve_existing_hp() {
+    for (role, cards) in [("三光", vec![0,8,28]), ("雨四光", vec![0,8,28,40]),
+        ("四光", vec![0,8,28,44]), ("五光", vec![0,8,28,40,44])] {
+        for existing in [None, Some([7, 9])] {
+            let mut g = blank();
+            g.captured[0] = cards.clone();
+            g.deck = (0..48).filter(|c| !cards.contains(c)).collect();
+            g.phase = Phase::Decision;
+            g.hyper_hp = existing;
+            g.hyper(0, role.into()).unwrap();
+            assert_eq!(g.hyper_hp, existing.or(if role == "三光" { Some([32;2]) } else { None }));
+            assert!(g.hyper_state(None).unwrap().intel.opponent_hand.is_empty());
+            assert!(g.hyper_state(None).unwrap().intel.next_card.is_none());
+        }
+    }
+}
+
+#[test]
+fn trap_lottery_is_stable_private_and_rejects_unoffered_choices_atomically() {
+    for seed in 0..100 {
+        let mut g = Game::with_rng(1, true, StdRng::seed_from_u64(seed));
+        contract(&mut g, 0, "雨四光");
+        g.turn = 0; g.phase = Phase::Play;
+        g.reset_hyper_turn(0);
+        let state = g.hyper_state(Some(0)).unwrap();
+        assert_eq!(state.trap_choices.len(), 2);
+        assert_ne!(state.trap_choices[0], state.trap_choices[1]);
+        assert_eq!(state.trap_choices, g.hyper_state(Some(0)).unwrap().trap_choices);
+        assert!(g.hyper_state(Some(1)).unwrap().trap_choices.is_empty());
+        assert!(g.hyper_state(None).unwrap().trap_choices.is_empty());
+        let unoffered = [TrapKind::Levy, TrapKind::Reveal, TrapKind::Bind].into_iter().find(|k| !state.trap_choices.contains(k)).unwrap();
+        let before = format!("{g:?}");
+        assert!(g.set_trap(0, g.field[0], g.board_revision, unoffered).is_err());
+        assert_eq!(format!("{g:?}"), before);
+        g.set_trap(0, g.field[0], g.board_revision, state.trap_choices[0]).unwrap();
+        assert_eq!(g.hyper_state(Some(0)).unwrap().trap_kinds[0], Some(state.trap_choices[0]));
+        assert_eq!(g.hyper_state(Some(1)).unwrap().trap_kinds, [None;2]);
+        assert_eq!(g.hyper_state(None).unwrap().trap_kinds, [None;2]);
+    }
+}
+
+#[test]
+fn three_traps_work_without_hp_and_reveal_no_private_cards_in_public_events() {
+    for kind in [TrapKind::Levy, TrapKind::Reveal, TrapKind::Bind] {
+        let mut g = blank();
+        contract(&mut g, 0, "雨四光");
+        contract(&mut g, 1, "青短");
+        g.hands = [vec![20], vec![0,12,16,24]];
+        g.field = vec![1];
+        g.hyper_trap_choices[0] = vec![kind];
+        g.hyper_bloom[1] = 3;
+        g.set_trap(0, 1, g.board_revision, kind).unwrap();
+        g.turn = 1;
+        g.hands[1].remove(0);
+        g.capture_or_place(1, 0, &[1], None);
+        g.push_event(1, PublicGameEventSource::Hand, 0, vec![1], false);
+        assert!(g.hyper_hp.is_none());
+        let beat = g.events[0].hyper.as_ref().unwrap();
+        assert_eq!(beat.trap_activations, vec![TrapActivation { owner:0, victim:1, card_id:1, kind,
+            amount: match kind { TrapKind::Levy => 3, TrapKind::Reveal => 2, TrapKind::Bind => 0 } }]);
+        assert_eq!(g.hyper_chain[1], 1);
+        assert!(g.hyper_state(None).unwrap().intel.opponent_hand.is_empty());
+        assert!(g.hyper_state(Some(1)).unwrap().intel.opponent_hand.is_empty());
+        match kind {
+            TrapKind::Levy => assert_eq!(g.hyper_bloom, [3,0]),
+            TrapKind::Reveal => {
+                let intel = g.hyper_state(Some(0)).unwrap().intel.opponent_hand;
+                assert_eq!(intel.len(), 2);
+                assert!(intel.iter().all(|c| g.hands[1].contains(c)));
+                let public = serde_json::to_string(&g.events).unwrap();
+                assert!(!public.contains("opponentHand"));
+                g.reset_hyper_turn(1);
+                assert_eq!(g.hyper_state(Some(0)).unwrap().intel.opponent_hand.len(), 2);
+                g.reset_hyper_turn(0);
+                assert!(g.hyper_state(Some(0)).unwrap().intel.opponent_hand.is_empty());
+            }
+            TrapKind::Bind => {
+                assert_eq!(g.hyper_boosts[1], 0);
+                assert!(g.hyper_growth_sealed[1]);
+                g.deck = vec![4,8,12];
+                g.hyper_chain[1] = 3;
+                g.queue_hyper_effects(1, &[4]);
+                assert_eq!(g.hyper_boosts[1], 0);
+                assert!(g.hyper_pending_draws[1] > 0);
+                g.reset_hyper_turn(1);
+                assert!(!g.hyper_growth_sealed[1]);
+                g.add_hyper_boost(1, 1);
+                assert_eq!(g.hyper_boosts[1], 1);
+            }
+        }
+        assert!(g.hyper_traps.iter().all(Option::is_none));
+    }
+}
+
+#[test]
+fn sight_reveals_only_authorized_hand_and_next_stock_and_changes_cpu_choices() {
+    let mut g = blank();
+    g.hands = [vec![0,4], vec![12,16]];
+    g.field = vec![8];
+    g.deck = vec![24,1];
+    assert!(g.move_value(0,0,None) < g.move_value(0,4,None));
+    contract(&mut g, 0, "四光");
+    let intel = g.hyper_state(Some(0)).unwrap().intel;
+    assert_eq!(intel.opponent_hand, vec![12,16]);
+    assert_eq!(intel.next_card, Some(1));
+    assert!(g.move_value(0,0,None) > g.move_value(0,4,None));
+    assert!(g.hyper_state(Some(1)).unwrap().intel.opponent_hand.is_empty());
+    assert!(g.hyper_state(None).unwrap().intel.next_card.is_none());
+    g.turn = 1;
+    assert_eq!(g.hyper_state(Some(0)).unwrap().intel.next_card, None);
+    assert_eq!(g.hyper_state(Some(0)).unwrap().intel.opponent_hand, vec![12,16]);
+    g.settle(None,0);
+    assert!(g.hyper_state(Some(0)).unwrap().intel.opponent_hand.is_empty());
+}
+
+#[test]
+fn revelation_cross_month_requires_one_choice_not_a_three_card_sweep_and_costs_bloom() {
+    let mut g = blank();
+    contract(&mut g,0,"五光");
+    g.hands = [vec![0,4], vec![12]];
+    g.field = vec![8,16,24];
+    assert_eq!(g.hand_targets(0)[0].targets, vec![8,16,24]);
+    let before = format!("{g:?}");
+    assert!(g.play(0,0,None).is_err());
+    assert_eq!(format!("{g:?}"), before);
+    g.capture_or_place(0,0,&[8,16,24],Some(16));
+    assert_eq!(g.captured[0],vec![0,16]);
+    assert_eq!(g.field,vec![8,24]);
+    assert_eq!(g.hyper_bloom,[0,2]);
+    assert!(g.matching(4).is_empty());
+    g.reset_hyper_turn(0);
+    assert_eq!(g.matching(4),vec![8,24]);
+    g.field = vec![1,2,3];
+    assert!(Game::takes_three(0,&g.matching(0)));
+    g.capture_or_place(0,0,&[1,2,3],None);
+    assert_eq!(g.hyper_bloom,[0,2]); // ordinary three-card sweep incurs no penalty
+}
+
+#[test]
+fn redeal_and_forfeit_clear_old_traps_reveals_and_growth_penalties() {
+    let mut g = blank();
+    contract(&mut g,0,"雨四光");
+    contract(&mut g,0,"四光");
+    g.hands = [vec![8], vec![12]]; g.field = vec![1];
+    g.deck = (0..48).filter(|c| ![8,12,1].contains(c)).collect();
+    g.set_trap(0,1,g.board_revision,TrapKind::Levy).unwrap();
+    g.hyper_revealed[0] = vec![12]; g.hyper_growth_sealed[1] = true;
+    g.hyper_reset_board();
+    assert_eq!(g.hyper_traps,[None;2]);
+    assert_eq!(g.hyper_trap_kinds,[None;2]);
+    assert!(g.hyper_revealed.iter().all(Vec::is_empty));
+    assert_eq!(g.hyper_growth_sealed,[false;2]);
+    let kind = g.hyper_trap_choices[0][0];
+    g.set_trap(0,g.field[0],g.board_revision,kind).unwrap();
+    g.hyper_growth_sealed[1] = true;
+    g.forfeit(1).unwrap();
+    let view = g.hyper_state(Some(0)).unwrap();
+    assert_eq!(view.traps,[None;2]);
+    assert!(view.trap_choices.is_empty());
+    assert!(view.intel.opponent_hand.is_empty());
+    assert!(view.intel.next_card.is_none());
+    assert_eq!(view.growth_sealed,[false;2]);
 }

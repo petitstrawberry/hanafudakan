@@ -5,7 +5,7 @@
 
 use rand::seq::SliceRandom;
 use rand::{rngs::StdRng, SeedableRng};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const BRIGHTS: [u8; 5] = [0, 8, 28, 40, 44];
 const ANIMALS: [u8; 9] = [4, 12, 16, 20, 24, 29, 32, 36, 41];
@@ -13,6 +13,33 @@ const RIBBONS: [u8; 10] = [1, 5, 9, 13, 17, 21, 25, 33, 37, 42];
 const HYPER_DRAW_LIMIT: u8 = 4;
 const DUEL_HP: u8 = 32;
 const DUEL_DAMAGE_LIMIT: u8 = 16;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrapKind { Levy, Reveal, Bind }
+
+impl TrapKind {
+    fn name(self) -> &'static str {
+        match self { Self::Levy => "徴収", Self::Reveal => "暴露", Self::Bind => "足枷" }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TrapActivation {
+    pub owner: usize,
+    pub victim: usize,
+    pub card_id: u8,
+    pub kind: TrapKind,
+    pub amount: u32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateIntel {
+    pub opponent_hand: Vec<u8>,
+    pub next_card: Option<u8>,
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +96,8 @@ pub struct HyperBeat {
     pub counter_draw: bool,
     pub traps: [Option<u8>; 2],
     pub damage: Vec<HyperDamage>,
+    pub trap_activations: Vec<TrapActivation>,
+    pub growth_sealed: [bool; 2],
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,6 +161,10 @@ pub struct HyperState {
     pub traps: [Option<u8>; 2],
     pub trap_ready: [bool; 2],
     pub damage_previews: Vec<DamagePreview>,
+    pub trap_choices: Vec<TrapKind>,
+    pub trap_kinds: [Option<TrapKind>; 2],
+    pub intel: PrivateIntel,
+    pub growth_sealed: [bool; 2],
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -192,9 +225,13 @@ pub struct Game {
     pub board_revision: u32,
     pub hyper_hp: Option<[u8; 2]>,
     hyper_traps: [Option<u8>; 2],
+    hyper_trap_kinds: [Option<TrapKind>; 2],
+    hyper_trap_choices: [Vec<TrapKind>; 2],
+    hyper_trap_activations: Vec<TrapActivation>,
+    hyper_revealed: [Vec<u8>; 2],
+    hyper_growth_sealed: [bool; 2],
     hyper_trap_used: [bool; 2],
     hyper_attack_used: [bool; 2],
-    hyper_guard_used: [bool; 2],
     hyper_damage: Vec<HyperDamage>,
     hyper_boosts: [u8; 2],
     hyper_turn_captures: [u8; 2],
@@ -250,9 +287,13 @@ impl Game {
             board_revision: 0,
             hyper_hp: None,
             hyper_traps: [None; 2],
+            hyper_trap_kinds: [None; 2],
+            hyper_trap_choices: [vec![], vec![]],
+            hyper_trap_activations: vec![],
+            hyper_revealed: [vec![], vec![]],
+            hyper_growth_sealed: [false; 2],
             hyper_trap_used: [false; 2],
             hyper_attack_used: [false; 2],
-            hyper_guard_used: [false; 2],
             hyper_damage: vec![],
             hyper_boosts: [0; 2],
             hyper_turn_captures: [0; 2],
@@ -313,7 +354,7 @@ impl Game {
                 .position(|&held| held == card)
                 .ok_or("手札にない札です。")?;
             let matches = game.matching(card);
-            game.validate_target(&matches, target)?;
+            game.validate_target(card, &matches, target)?;
             game.hands[player].remove(index);
             let targets = game.capture_or_place(player, card, &matches, target);
             game.push_event(player, PublicGameEventSource::Hand, card, targets, false);
@@ -327,7 +368,7 @@ impl Game {
             game.require_turn(player, Phase::DrawChoice)?;
             let card = game.drawn_card.ok_or("選ぶ札がありません。")?;
             let matches = game.matching(card);
-            game.validate_target(&matches, Some(target))?;
+            game.validate_target(card, &matches, Some(target))?;
             game.drawn_card = None;
             let targets = game.capture_or_place(player, card, &matches, Some(target));
             game.push_event(player, PublicGameEventSource::Choice, card, targets, false);
@@ -395,6 +436,12 @@ impl Game {
             if game.phase == Phase::Finished {
                 return Err("対局は終了しています。".into());
             }
+            game.hyper_traps = [None; 2];
+            game.hyper_trap_kinds = [None; 2];
+            game.hyper_trap_choices = [vec![], vec![]];
+            game.hyper_revealed = [vec![], vec![]];
+            game.hyper_growth_sealed = [false; 2];
+            game.hyper_pending_draws = [0; 2];
             game.phase = Phase::Finished;
             game.winner = Some(1 - player);
             game.forfeited_winner = game.winner;
@@ -538,7 +585,7 @@ impl Game {
             game.clear_opponent_for_reset(player);
             // 盤面を仕切り直す。両手札・場札・山札を集めて配り直す。
             game.hyper_reset_board();
-            if is_light_contract(&option.contract.id) && game.hyper_hp.is_none() {
+            if option.contract.id == "storm" && game.hyper_hp.is_none() {
                 game.hyper_hp = Some([duel_hp(); 2]);
                 game.push_log(format!("修羅場、両者HP{}。札＋新しい役の増点＋CHAIN＋初撃威力で攻撃（上限16）。", duel_hp()));
             }
@@ -572,24 +619,29 @@ impl Game {
             traps: self.hyper_traps,
             trap_ready: [self.can_set_trap(0), self.can_set_trap(1)],
             damage_previews: player.map(|p| self.damage_previews(p)).unwrap_or_default(),
+            trap_choices: player.filter(|&p| self.can_set_trap(p)).map(|p| self.hyper_trap_choices[p].clone()).unwrap_or_default(),
+            trap_kinds: std::array::from_fn(|p| if player == Some(p) && self.hyper_traps[p].is_some() { self.hyper_trap_kinds[p] } else { None }),
+            intel: player.map(|p| self.private_intel(p)).unwrap_or_default(),
+            growth_sealed: self.hyper_growth_sealed,
         })
     }
 
     /// Performs exactly one phase's action. The AI inspects its own hand and
-    /// public cards only, never the opponent's hand or the unexposed stock.
+    /// public cards plus information explicitly revealed by 看破/暴露.
     pub fn cpu_action(&mut self) {
         let player = self.turn;
         match self.phase {
             Phase::Play => {
                 if self.can_set_trap(player) {
                     let target = self.field.iter().copied().max_by_key(|&c| card_value(c)).unwrap();
-                    let _ = self.set_trap(player, target, self.board_revision);
+                    let kind = self.hyper_trap_choices[player].first().copied().unwrap();
+                    let _ = self.set_trap(player, target, self.board_revision, kind);
                 }
                 let best = self.hands[player]
                     .iter()
                     .flat_map(|&card| {
                         let matches = self.matching(card);
-                        if matches.len() == 2 {
+                        if self.needs_choice(card, &matches) {
                             matches
                                 .into_iter()
                                 .map(|target| (card, Some(target)))
@@ -684,9 +736,13 @@ impl Game {
         self.board_revision = self.board_revision.saturating_add(1);
         self.hyper_hp = None;
         self.hyper_trap_used = [false; 2];
+        self.hyper_trap_choices = [vec![], vec![]];
         self.hyper_attack_used = [false; 2];
-        self.hyper_guard_used = [false; 2];
         self.hyper_traps = [None; 2];
+        self.hyper_trap_kinds = [None; 2];
+        self.hyper_trap_activations.clear();
+        self.hyper_revealed = [vec![], vec![]];
+        self.hyper_growth_sealed = [false; 2];
         self.hyper_damage.clear();
         self.hyper_boosts = [0; 2];
         self.hyper_turn_captures = [0; 2];
@@ -744,6 +800,12 @@ impl Game {
         if !same_month.is_empty() {
             return same_month;
         }
+        // 天啓 guarantees the first acquisition, but never turns three
+        // unrelated field cards into the normal three-of-a-month sweep.
+        if self.hyper && self.has_hyper_contract(self.turn, "zenith")
+            && self.hyper_turn_captures[self.turn] == 0 {
+            return self.field.clone();
+        }
         // 詠唱 turns a ribbon into a one-shot cross-month link. Returning a
         // single target keeps the normal no-dialogue hand interaction intact.
         if self.hyper
@@ -773,13 +835,21 @@ impl Game {
             .collect()
     }
 
-    fn validate_target(&self, matches: &[u8], target: Option<u8>) -> Result<(), String> {
+    fn takes_three(card: u8, matches: &[u8]) -> bool {
+        matches.len() == 3 && matches.iter().all(|&c| month(c) == month(card))
+    }
+
+    fn needs_choice(&self, card: u8, matches: &[u8]) -> bool {
+        matches.len() > 1 && !Self::takes_three(card, matches)
+    }
+
+    fn validate_target(&self, card: u8, matches: &[u8], target: Option<u8>) -> Result<(), String> {
         if let Some(target) = target
             && !matches.contains(&target)
         {
-            return Err("同じ月の場札を選んでください。".into());
+            return Err("取得できる場札を選んでください。".into());
         }
-        if matches.len() == 2 && target.is_none() {
+        if self.needs_choice(card, matches) && target.is_none() {
             return Err("取る場札を1枚選んでください。".into());
         }
         Ok(())
@@ -793,6 +863,7 @@ impl Game {
         target: Option<u8>,
     ) -> Vec<u8> {
         self.hyper_damage.clear();
+        self.hyper_trap_activations.clear();
         let previous_roles = evaluate(&self.active_captured(player));
         if matches.is_empty() {
             self.field.push(card);
@@ -800,11 +871,11 @@ impl Game {
                 self.hyper_miss_used[player] = true;
                 self.add_hyper_boost(player, 2);
                 self.hyper_bloom[1 - player] += 2;
-                self.push_log(format!("{}番手、逆転月！空振りで倍率＋0.5、相手の花力＋2。", player + 1));
+                self.push_log(format!("{}番手、逆転月！空振りで倍率＋{}、相手の花力＋2。", player + 1, if self.hyper_growth_sealed[player] { "0（足枷）" } else { "0.5" }));
             }
             return vec![];
         }
-        let taken = if matches.len() == 3 {
+        let taken = if Self::takes_three(card, matches) {
             matches.to_vec()
         } else {
             vec![target.unwrap_or(matches[0])]
@@ -823,6 +894,20 @@ impl Game {
             let mut acquired = Vec::with_capacity(taken.len() + 1);
             acquired.push(card);
             acquired.extend(taken.iter().copied());
+            // Traps apply before growth so 足枷 also stops this acquisition's
+            // permanent boost. Card capture and the shared CHAIN still happen.
+            for owner in 0..2 {
+                if let Some(trap) = self.hyper_traps[owner].filter(|id| taken.contains(id)) {
+                    self.hyper_traps[owner] = None;
+                    if owner != player { self.activate_trap(owner, player, trap); }
+                    self.hyper_trap_kinds[owner] = None;
+                }
+            }
+            if self.has_hyper_contract(player, "zenith") && self.hyper_turn_captures[player] == 1
+                && taken.iter().any(|&c| month(c) != month(card)) {
+                self.hyper_bloom[1 - player] += 2;
+                self.push_log(format!("{}番手、天啓！月を越えて取得。代償として相手の花力＋2。", player + 1));
+            }
             self.queue_hyper_effects(player, &acquired);
             if self.hyper_hp.is_some() {
                 let first = !self.hyper_attack_used[player];
@@ -830,22 +915,11 @@ impl Game {
                 let gains = role_increases(&previous_roles, &evaluate(&self.active_captured(player)));
                 let roles = total(&gains).min(10) as u8;
                 let contract = if first {
-                    self.hyper_contracts[player].iter().filter(|c| is_light_contract(&c.id))
-                        .map(|c| (c.points / 3).min(3) as u8 + if c.id == "zenith" { 2 } else { 0 })
-                        .max().unwrap_or(0)
+                    u8::from(self.has_hyper_contract(player, "storm"))
                 } else { 0 };
                 self.apply_duel_damage(player, "capture", DamageParts { cards: acquired.len() as u8,
                     roles, role_gains: gains, chain: u8::from(self.hyper_chain[player] >= 3), contract });
-                // Resolve the capture and the public trap together. Both can K.O.
-                // in the same acquisition; neither player draws after that.
-                for owner in 0..2 {
-                    if self.hyper_traps[owner].is_some_and(|id| taken.contains(&id)) {
-                        self.hyper_traps[owner] = None;
-                        if owner != player {
-                            self.apply_duel_damage(owner, "trap", DamageParts { contract: 4, ..DamageParts::default() });
-                        }
-                    }
-                }
+
             }
         }
         self.push_log(format!(
@@ -860,7 +934,7 @@ impl Game {
     fn draw(&mut self) {
         if let Some(card) = self.deck.pop() {
             let matches = self.matching(card);
-            if matches.len() == 2 {
+            if self.needs_choice(card, &matches) {
                 self.drawn_card = Some(card);
                 self.phase = Phase::DrawChoice;
                 self.push_event(self.turn, PublicGameEventSource::Draw, card, vec![], true);
@@ -898,7 +972,9 @@ impl Game {
     }
 
     fn add_hyper_boost(&mut self, player: usize, quarters: u8) {
-        self.hyper_boosts[player] = self.hyper_boosts[player].saturating_add(quarters).min(12);
+        if !self.hyper_growth_sealed[player] {
+            self.hyper_boosts[player] = self.hyper_boosts[player].saturating_add(quarters).min(12);
+        }
     }
 
     // Hundredths avoid client/server floating-point rounding disagreements.
@@ -937,15 +1013,53 @@ impl Game {
             && !self.field.is_empty()
     }
 
-    pub fn set_trap(&mut self, player: usize, target: u8, revision: u32) -> Result<(), String> {
+    fn private_intel(&self, player: usize) -> PrivateIntel {
+        if matches!(self.phase, Phase::RoundEnd | Phase::Finished) { return PrivateIntel::default(); }
+        let sight = self.has_hyper_contract(player, "aegis") || self.has_hyper_contract(player, "zenith");
+        PrivateIntel {
+            opponent_hand: if sight { self.hands[1 - player].clone() }
+                else { self.hyper_revealed[player].iter().copied().filter(|c| self.hands[1 - player].contains(c)).collect() },
+            next_card: if sight && self.turn == player { self.deck.last().copied() } else { None },
+        }
+    }
+
+    fn activate_trap(&mut self, owner: usize, victim: usize, card_id: u8) {
+        let Some(kind) = self.hyper_trap_kinds[owner] else { return; };
+        let (amount, effect) = match kind {
+            TrapKind::Levy => {
+                let amount = self.hyper_bloom[victim].min(4);
+                self.hyper_bloom[victim] -= amount;
+                self.hyper_bloom[owner] += amount;
+                (amount, format!("花力{amount}を奪取"))
+            }
+            TrapKind::Reveal => {
+                let mut hand = self.hands[victim].clone();
+                hand.shuffle(&mut self.rng);
+                hand.truncate(2);
+                let amount = hand.len() as u32;
+                self.hyper_revealed[owner] = hand;
+                (amount, format!("残り手札{amount}枚を罠の所有者に開示（所有者の次の手番終了まで）"))
+            }
+            TrapKind::Bind => {
+                self.hyper_growth_sealed[victim] = true;
+                (0, "この取得から手番終了まで倍率の永久成長を停止。CHAIN・めくりは継続".into())
+            }
+        };
+        self.hyper_trap_activations.push(TrapActivation { owner, victim, card_id, kind, amount });
+        self.push_log(format!("トラップ札発動！！{}番手の『{}』→{}番手：{}。", owner + 1, kind.name(), victim + 1, effect));
+    }
+
+    pub fn set_trap(&mut self, player: usize, target: u8, revision: u32, kind: TrapKind) -> Result<(), String> {
         self.transaction(|game| {
             game.require_turn(player, Phase::Play)?;
             if revision != game.board_revision { return Err("盤面が更新されています。罠を選び直してください。".into()); }
             if !game.can_set_trap(player) { return Err("罠は雨四光の契約者が各手番1回だけ指定できます。".into()); }
             if !game.field.contains(&target) { return Err("罠は場札を指定してください。".into()); }
+            if !game.hyper_trap_choices[player].contains(&kind) { return Err("抽選された罠から選んでください。".into()); }
             game.hyper_traps[player] = Some(target);
+            game.hyper_trap_kinds[player] = Some(kind);
             game.hyper_trap_used[player] = true;
-            game.push_log(format!("{}番手、{}月の場札#{}に公開罠。相手が取ると4ダメージ。", player + 1, month(target) + 1, target));
+            game.push_log(format!("{}番手、{}月の場札#{}に伏せ罠。効果は発動時に公開。", player + 1, month(target) + 1, target));
             Ok(())
         })
     }
@@ -960,7 +1074,7 @@ impl Game {
         let mut result = vec![];
         for card in cards {
             let matches = self.matching(card);
-            let targets: Vec<_> = if matches.len() == 2 { matches.iter().copied().map(Some).collect() }
+            let targets: Vec<_> = if self.needs_choice(card, &matches) { matches.iter().copied().map(Some).collect() }
                 else { vec![matches.first().copied()] };
             for target in targets {
                 // Only the visible acquisition is simulated, never the next stock card.
@@ -975,13 +1089,10 @@ impl Game {
     fn apply_duel_damage(&mut self, attacker: usize, kind: &str, parts: DamageParts) {
         let DamageParts { cards, roles, role_gains, chain, contract } = parts;
         let defender = 1 - attacker;
-        let exposure = u8::from(self.has_hyper_contract(defender, "zenith"));
+        let exposure = 0;
         let raw = cards + roles + chain + contract + exposure;
         let capped = raw.min(DUEL_DAMAGE_LIMIT);
-        let blocked = if self.has_hyper_contract(defender, "aegis") && !self.hyper_guard_used[defender] {
-            self.hyper_guard_used[defender] = true;
-            capped.min(2)
-        } else { 0 };
+        let blocked = 0;
         let power = capped - blocked;
         let hp = self.hyper_hp.as_mut().unwrap();
         let before = hp[defender];
@@ -1051,7 +1162,7 @@ impl Game {
             self.hyper_bloom[player] += bloom;
             if bloom > 0 { self.push_log(format!("{}番手、草蔵！カス{}枚で花力＋{}。", player + 1, earned, bloom)); }
         }
-        if self.has_hyper_contract(player, "seal") && self.hyper_turn_captures[player] <= 2 {
+        if self.has_hyper_contract(player, "seal") && self.hyper_turn_captures[player] <= 2 && !self.hyper_growth_sealed[player] {
             self.add_hyper_boost(player, 1);
             self.push_log(format!("{}番手、倍喰い！倍率＋0.25。", player + 1));
         }
@@ -1061,7 +1172,7 @@ impl Game {
             let extra = self.hyper_overdrive_used[player] == 0 && self.reserve_hyper_draw(player);
             self.hyper_overdrive_used[player] += growth;
             self.add_hyper_boost(player, growth);
-            self.push_log(format!("{}番手、{} CHAIN！倍率＋{}{}。", player + 1, self.hyper_chain[player], f32::from(growth) / 4.0, if extra { "・追加めくり1回" } else { "" }));
+            self.push_log(format!("{}番手、{} CHAIN！倍率＋{}{}。", player + 1, self.hyper_chain[player], if self.hyper_growth_sealed[player] { 0.0 } else { f32::from(growth) / 4.0 }, if extra { "・追加めくり1回" } else { "" }));
         }
     }
 
@@ -1100,6 +1211,10 @@ impl Game {
         self.board_revision += 1;
         self.hyper_chain = [0; 2];
         self.hyper_traps = [None; 2];
+        self.hyper_trap_kinds = [None; 2];
+        self.hyper_trap_activations.clear();
+        self.hyper_revealed = [vec![], vec![]];
+        self.hyper_growth_sealed = [false; 2];
         self.hyper_damage.clear();
         for player in 0..2 { self.reset_hyper_turn(player); }
         self.push_log(format!("再配布！双方の手札{}枚・場{}枚・山札{}枚。", deal_count, deal_count, self.deck.len()));
@@ -1128,8 +1243,13 @@ impl Game {
     fn reset_hyper_turn(&mut self, player: usize) {
         self.hyper_turn_captures[player] = 0;
         self.hyper_attack_used[player] = false;
-        self.hyper_guard_used = [false; 2];
         self.hyper_trap_used[player] = false;
+        self.hyper_growth_sealed[player] = false;
+        self.hyper_revealed[player].clear();
+        let mut choices = vec![TrapKind::Levy, TrapKind::Reveal, TrapKind::Bind];
+        if self.has_hyper_contract(player, "snare") { choices.shuffle(&mut self.rng); choices.truncate(2); }
+        else { choices.clear(); }
+        self.hyper_trap_choices[player] = choices;
         self.hyper_miss_used[player] = false;
         self.hyper_pending_draws[player] = 0;
         self.hyper_draws_used[player] = 0;
@@ -1175,9 +1295,11 @@ impl Game {
         } else {
             self.turn = 1 - self.turn;
             self.hyper_traps[self.turn] = None;
+            self.hyper_trap_kinds[self.turn] = None;
             if self.hands[self.turn].is_empty() {
                 self.turn = 1 - self.turn;
                 self.hyper_traps[self.turn] = None;
+                self.hyper_trap_kinds[self.turn] = None;
             }
             self.phase = Phase::Play;
         }
@@ -1185,6 +1307,10 @@ impl Game {
 
     fn settle(&mut self, winner: Option<usize>, points: u32) {
         self.hyper_traps = [None; 2];
+        self.hyper_trap_kinds = [None; 2];
+        self.hyper_trap_choices = [vec![], vec![]];
+        self.hyper_revealed = [vec![], vec![]];
+        self.hyper_growth_sealed = [false; 2];
         self.winner = winner;
         self.round_points = points;
         if let Some(player) = winner {
@@ -1202,13 +1328,24 @@ impl Game {
 
     fn move_value(&self, player: usize, card: u8, target: Option<u8>) -> i32 {
         let matches = self.matching(card);
+        // The CPU gets exactly the information its contract/trap authorizes.
+        // Value known next-draw matches and deny months in a revealed hand.
+        let intel = self.private_intel(player);
+        let removed: Vec<_> = if Self::takes_three(card, &matches) { matches.clone() }
+            else { target.or_else(|| matches.first().copied()).into_iter().collect() };
+        let remaining = self.field.iter().copied().filter(|c| !removed.contains(c))
+            .chain(if matches.is_empty() { Some(card) } else { None }).collect::<Vec<_>>();
+        let foresight = intel.next_card.map_or(0, |next| {
+            if remaining.iter().any(|&c| month(c) == month(next)) { 45 + card_value(next) * 4 } else { 0 }
+        });
+        let denial = -(remaining.iter().filter(|&&c| intel.opponent_hand.iter().any(|&h| month(h) == month(c))).count() as i32) * 8;
         if matches.is_empty() {
             // Keep the more valuable cards in hand when a capture is impossible.
-            return -card_value(card);
+            return -card_value(card) + foresight + denial;
         }
         let mut potential = self.active_captured(player);
         potential.push(card);
-        if matches.len() == 3 {
+        if Self::takes_three(card, &matches) {
             potential.extend(&matches);
         } else if let Some(target) = target.or_else(|| matches.first().copied()) {
             potential.push(target);
@@ -1222,7 +1359,7 @@ impl Game {
             else if preview.hyper_hp.is_some_and(|hp| hp[1 - player] == 0) { 10000 }
             else { preview.hyper_damage.iter().map(|hit| if hit.attacker == player { i32::from(hit.power) * 15 } else { -i32::from(hit.power) * 20 }).sum() }
         } else { 0 };
-        combat + gain * 100 + potential.iter().map(|&c| card_value(c)).sum::<i32>()
+        combat + foresight + denial + gain * 100 + potential.iter().map(|&c| card_value(c)).sum::<i32>()
             - self.captured[player]
                 .iter()
                 .map(|&c| card_value(c))
@@ -1246,6 +1383,7 @@ impl Game {
     ) {
         self.event_seq += 1;
         let damage = std::mem::take(&mut self.hyper_damage);
+        let trap_activations = std::mem::take(&mut self.hyper_trap_activations);
         self.events.push(PublicGameEvent {
             id: self.event_seq,
             player,
@@ -1264,6 +1402,8 @@ impl Game {
                 hp: self.hyper_hp,
                 traps: self.hyper_traps,
                 damage,
+                trap_activations,
+                growth_sealed: self.hyper_growth_sealed,
                 counter_draw: source != PublicGameEventSource::Hand
                     && self.counter_draw_budget(player) > 0
                     && self.hyper_draws_used[player] > 0,
@@ -1283,9 +1423,9 @@ fn hyper_contract_for_role(role: &str) -> Option<HyperContract> {
         "花見で一杯" => ("feast", "宴", "花見酒", 5, "光・盃の取得で花力＋3（各手番2回まで）。配当を育てるが、負けると失う"),
         "月見で一杯" => ("night", "逆転月", "月見酒", 5, "各手番最初の空振りで倍率＋0.5、代わりに相手の花力＋2。CHAIN切れにも注意"),
         "三光" => ("storm", "修羅場", "三光", 5, "双方HP32で役撃戦。各手番の初撃＋1。役の新成立・増点も威力に。相手も攻撃できる"),
-        "雨四光" => ("snare", "雨罠", "雨四光", 7, "修羅場＋初撃2。自分の手番に場札1枚を公開罠へ。相手が取ると4ダメージ、自分が取ると解除。次の自分手番で失効"),
-        "四光" => ("aegis", "光壁", "四光", 8, "修羅場＋初撃2。各手番の最初の被攻撃を2軽減（罠も含む）。再配布してもHP回復なし"),
-        "五光" => ("zenith", "天威", "五光", 10, "修羅場＋初撃5。ただし全ての被攻撃＋1（罠も含む）。高威力と危険を背負う"),
+        "雨四光" => ("snare", "伏兵", "雨四光", 7, "各手番、抽選された2種類から罠を選び場札1枚へ。徴収＝花力を最大4奪取、暴露＝手札2枚を見る、足枷＝その手番の倍率成長を停止。自分取得で解除、次の自分手番で失効"),
+        "四光" => ("aegis", "看破", "四光", 8, "相手の全手札を自分だけ確認。自分の手番には次の山札も見える。情報を読んで役と取得先を選ぶ。通常のあがり条件は犠牲8文を超える必要あり"),
+        "五光" => ("zenith", "天啓", "五光", 10, "看破の全手札・次の山札の情報に加え、各手番の最初の取得まで同月がなければ任意の場札1枚を取れる。月越え取得の代償は相手の花力＋2。以降は通常の月合わせ"),
         "タネ" => ("hunt", "追猟", "タネ", 1, "各手番最初のタネ取得で花力＋1、相手の花力を最大1奪う（犠牲役点に応じ最大3）"),
         "短冊" => ("ink", "連筆", "タン", 1, "各手番最初の短冊取得で通常の増加に加えCHAIN＋1（犠牲役点に応じ最大3）"),
         "カス" => ("grass", "草蔵", "カス", 1, "カス1枚につき花力＋1（各手番3枚まで、犠牲役点に応じ最大3/枚）"),
@@ -1310,9 +1450,6 @@ fn describe_scaled_contract(contract: &mut HyperContract) {
     };
 }
 
-fn is_light_contract(id: &str) -> bool {
-    matches!(id, "storm" | "snare" | "aegis" | "zenith")
-}
 
 fn duel_hp() -> u8 {
     #[cfg(test)]
@@ -1469,7 +1606,12 @@ impl Game {
         let roles: Vec<(&str, Vec<u8>)> = if kind == "engines" {
             vec![("タネ", vec![4,12,16,20,24,32,36]), ("短冊", vec![1,5,9,13,17,21,25]),
                  ("カス", vec![2,3,6,7,10,11,14,15,18,19,22,23])]
-        } else { vec![("雨四光", vec![0,8,28,40])] };
+        } else { match kind {
+            "sight" => vec![("四光", vec![0,8,28,44])],
+            "revelation" => vec![("五光", vec![0,8,28,40,44])],
+            "storm_ko" => vec![("三光", vec![0,8,28])],
+            _ => vec![("雨四光", vec![0,8,28,40])],
+        } };
         for (role, cards) in roles {
             game.hands = [vec![], vec![]]; game.field.clear();
             game.captured = [cards.clone(), vec![]];
@@ -1477,12 +1619,14 @@ impl Game {
             game.turn = 0; game.phase = Phase::Decision;
             game.hyper(0, role.into()).unwrap();
         }
-        if kind == "shield" || kind == "exposure" {
-            let role = if kind == "shield" { "四光" } else { "五光" };
-            game.hyper_contracts[1].push(hyper_contract_for_role(role).unwrap());
-        }
+        if kind == "bind" { game.hyper_contracts[1].push(hyper_contract_for_role("青短").unwrap()); }
         game.captured = if kind == "engines" { [vec![], vec![]] } else { [vec![], vec![1,5]] };
-        game.hands = if kind == "engines" { [vec![4,0], vec![12,16]] } else { [vec![16,20], vec![8,12]] };
+        game.hands = match kind {
+            "engines" => [vec![4,0], vec![12,16]],
+            "revelation" => [vec![0,4],vec![12,20]],
+            "reveal" => [vec![24,36],vec![8,12,16,20]],
+            _ => [vec![16,20], vec![8,12]],
+        };
         game.field = if kind == "engines" { vec![6,9,17] } else if kind == "draw_choice" { vec![9,10,13,21] } else { vec![9,13,21] };
         if kind == "draw_choice" { game.hands[1] = vec![4,12]; }
         let tops = if kind == "engines" { vec![5,2,8] } else if kind == "draw_choice" { vec![8,28] } else { vec![2,44,28] };
@@ -1491,10 +1635,16 @@ impl Game {
         game.turn = 0; game.phase = Phase::Play;
         game.checkpoint = [0; 2]; game.koikoi = [0; 2];
         game.hyper_chain = [0; 2]; game.hyper_bloom = [0; 2];
-        game.hyper_hp = match kind { "mutual" => Some([7,4]), "attacker_ko" => Some([32,4]), "engines" => None, _ => Some([32,32]) };
+        game.hyper_hp = if kind == "storm_ko" { Some([7,32]) } else { None };
+        if kind == "levy" || kind == "draw_choice" { game.hyper_bloom[1] = 3; }
+        if kind == "bind" { game.hyper_chain[1] = 2; }
         if kind == "engines" { game.hyper_bloom[1] = 5; }
         game.events.clear(); game.log.clear();
         for p in 0..2 { game.reset_hyper_turn(p); }
+        if game.has_hyper_contract(0, "snare") {
+            let kind = match kind { "reveal" => TrapKind::Reveal, "bind" => TrapKind::Bind, _ => TrapKind::Levy };
+            game.hyper_trap_choices[0] = vec![kind, if kind == TrapKind::Levy { TrapKind::Reveal } else { TrapKind::Levy }];
+        }
         game
     }
 }
@@ -1531,9 +1681,13 @@ mod tests {
             board_revision: 0,
             hyper_hp: None,
             hyper_traps: [None; 2],
+            hyper_trap_kinds: [None; 2],
+            hyper_trap_choices: [vec![], vec![]],
+            hyper_trap_activations: vec![],
+            hyper_revealed: [vec![], vec![]],
+            hyper_growth_sealed: [false; 2],
             hyper_trap_used: [false; 2],
             hyper_attack_used: [false; 2],
-            hyper_guard_used: [false; 2],
             hyper_damage: vec![],
             hyper_boosts: [0; 2],
             hyper_turn_captures: [0; 2],

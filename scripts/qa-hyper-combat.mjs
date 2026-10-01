@@ -24,11 +24,12 @@ try {
     page.on('pageerror', error => report.pageErrors.push(error.message));
     await page.goto(`${base}/qa/hyper.html`);
     await page.getByText('補助UI試験（合成局面）', { exact: true }).click();
-    await page.getByRole('button', { name: '雨罠・ダメージ予告', exact: true }).click();
+    await page.getByRole('button', { name: '伏兵・ダメージ予告', exact: true }).click();
     await page.getByRole('button', { name: '罠を指定', exact: true }).click();
     await page.getByRole('button', { name: '罠を取消', exact: true }).click();
     assert.equal(await page.locator('.field-trapped').count(), 0);
     await page.getByRole('button', { name: '罠を指定', exact: true }).click();
+    await page.locator('.trap-choice-panel button').filter({ hasText: '徴収' }).click();
     await page.locator('.field-slot .hana-card[data-card-id="9"]').click();
     await page.waitForFunction(() => document.querySelector('.field-trap-label')?.textContent?.includes('あなたの罠'));
     assert.equal(await page.getByRole('button', { name: '罠を指定', exact: true }).count(), 0);
@@ -50,11 +51,11 @@ try {
     await page.getByRole('button', { name: 'めくり・ダメージ予告', exact: true }).click();
     assert.equal(await page.getByRole('button', { name: '罠を指定', exact: true }).count(), 0);
     await page.getByText('攻撃内訳', { exact: true }).click();
-    assert.match(await page.locator('.combat-preview').innerText(), /罠4/);
+    assert.doesNotMatch(await page.locator('.combat-preview').innerText(), /罠4/);
     assert.equal(await page.locator('.field-slot.match-target').count(), 2);
     await page.screenshot({ path: `${output}/drawn-combat-${viewport.width}.png`, fullPage: true });
     await page.getByText('補助UI試験（合成局面）', { exact: true }).click();
-    await page.getByRole('button', { name: '罠で相打ちK.O.', exact: true }).click();
+    await page.getByRole('button', { name: '双方HP演出（旧イベント互換）', exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll('.hyper-hp meter').length === 2 && [...document.querySelectorAll('.hyper-hp meter')].every(m => m.value === 0), { timeout: 15000 });
     await page.waitForFunction(() => !document.querySelector('.hp-attack-overlay'), { timeout: 15000 });
     await page.screenshot({ path: `${output}/mutual-ko-${viewport.width}.png`, fullPage: true });

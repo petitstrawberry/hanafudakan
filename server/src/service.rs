@@ -841,6 +841,7 @@ enum Command {
         role: String,
     },
     Trap {
+        kind: crate::game::TrapKind,
         #[serde(rename = "targetId")]
         target_id: u8,
         #[serde(rename = "boardRevision")]
@@ -971,9 +972,9 @@ fn apply_command(room: &mut Room, session: &Session, command: Command) -> Result
                         .ok_or("対局が始まっていません")?
                         .decision(index, koikoi)?;
                 }
-                Command::Trap { target_id, board_revision } => {
+                Command::Trap { target_id, board_revision, kind } => {
                     room.game.as_mut().ok_or("対局が始まっていません")?
-                        .set_trap(index, target_id, board_revision)?;
+                        .set_trap(index, target_id, board_revision, kind)?;
                 }
                 Command::Hyper { role } => {
                     room.game
@@ -1870,10 +1871,11 @@ mod tests {
         apply_command(room, &session, Command::Hyper { role: "雨四光".into() }).unwrap();
         let game = room.game.as_mut().unwrap();
         game.turn = 0;
+        let kind = game.hyper_state(Some(0)).unwrap().trap_choices[0];
         let revision = game.board_revision;
         let target = game.field[0];
         let field = game.field.clone();
-        let command: Command = serde_json::from_value(json!({"type":"trap","targetId":target,"boardRevision":revision})).unwrap();
+        let command: Command = serde_json::from_value(json!({"type":"trap","targetId":target,"boardRevision":revision,"kind":kind})).unwrap();
         apply_command(room, &session, command).unwrap();
         room.broadcast();
         let message = rx.try_recv().unwrap();
@@ -1883,7 +1885,8 @@ mod tests {
         assert_eq!(view["turn"], 0);
         assert_eq!(view["boardRevision"], revision);
         assert_eq!(view["field"], json!(field));
-        assert!(!view["hyper"]["damagePreviews"].as_array().unwrap().is_empty());
+        assert_eq!(view["hyper"]["hp"], serde_json::Value::Null);
+        assert_eq!(view["hyper"]["trapKinds"], json!([kind, null]));
         for preview in view["hyper"]["damagePreviews"].as_array().unwrap() {
             assert!(view["hand"].as_array().unwrap().contains(&preview["cardId"]));
         }
@@ -1892,14 +1895,40 @@ mod tests {
         assert_eq!(reconnect["hyper"]["damagePreviews"], view["hyper"]["damagePreviews"]);
         let spectator = serde_json::to_value(room.view("spectator")).unwrap();
         assert_eq!(spectator["hyper"]["traps"], json!([target, null]));
+        assert_eq!(spectator["hyper"]["trapKinds"], json!([null, null]));
+        assert_eq!(spectator["hyper"]["trapChoices"], json!([]));
+        assert_eq!(spectator["hyper"]["intel"]["opponentHand"], json!([]));
         assert_eq!(spectator["hyper"]["damagePreviews"], json!([]));
         assert_eq!(spectator["hand"], json!([]));
         let opponent = serde_json::to_value(room.view(&room.players[1].id)).unwrap();
         assert_eq!(opponent["hyper"]["damagePreviews"], json!([]));
         let before = format!("{:?}", room.game);
-        assert!(apply_command(room, &session, Command::Trap { target_id: target, board_revision: revision }).is_err());
-        assert!(apply_command(room, &session, Command::Trap { target_id: target, board_revision: revision + 1 }).is_err());
+        assert!(apply_command(room, &session, Command::Trap { target_id: target, board_revision: revision, kind: crate::game::TrapKind::Levy }).is_err());
+        assert!(apply_command(room, &session, Command::Trap { target_id: target, board_revision: revision + 1, kind: crate::game::TrapKind::Levy }).is_err());
         assert_eq!(before, format!("{:?}", room.game));
+
+        // A second real conversion grants information only to its owner.
+        let game = room.game.as_mut().unwrap();
+        game.turn = 0; game.phase = Phase::Decision;
+        game.hands = [vec![], vec![]]; game.field.clear();
+        game.captured = [vec![0,8,28,44], vec![]];
+        game.deck = (0..48).filter(|c| ![0,8,28,44].contains(c)).collect();
+        apply_command(room, &session, Command::Hyper { role: "四光".into() }).unwrap();
+        room.game.as_mut().unwrap().turn = 0;
+        room.broadcast();
+        let broadcast = rx.try_recv().unwrap();
+        let private = serde_json::to_value(room.view(&session.player_id)).unwrap();
+        let other = serde_json::to_value(room.view(&room.players[1].id)).unwrap();
+        let public = serde_json::to_value(room.view("spectator")).unwrap();
+        assert_eq!(broadcast["room"]["hyper"]["intel"], private["hyper"]["intel"]);
+        assert_eq!(private["hyper"]["intel"]["opponentHand"], other["hand"]);
+        assert_eq!(private["hyper"]["intel"]["nextCard"], json!(room.game.as_ref().unwrap().deck.last()));
+        for snapshot in [&other, &public] {
+            assert_eq!(snapshot["hyper"]["intel"], json!({"opponentHand":[],"nextCard":null}));
+        }
+        assert_eq!(private["hyper"]["traps"], json!([null,null]));
+        assert_eq!(private["hyper"]["hp"], serde_json::Value::Null);
+        assert_eq!(private["events"], json!([]));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1908,7 +1937,7 @@ mod tests {
         let state = AppState::default();
         let router = app(state.clone(), "client/dist");
         let mut fixtures = vec![];
-        for kind in ["capture", "shield", "exposure", "mutual", "attacker_ko", "draw_choice", "engines"] {
+        for kind in ["levy", "reveal", "bind", "draw_choice", "sight", "revelation", "storm_ko", "engines"] {
             let host = session(&router, "罠の契約者").await;
             let guest = session(&router, "攻撃する人").await;
             let (_, created) = request(router.clone(), "POST", "/api/rooms", Some(&host),

@@ -1,4 +1,4 @@
-export type SoundKind = 'click' | 'deal' | 'capture' | 'hyper_capture' | 'hyper_chain' | 'hp_hit' | 'ko_blast' | 'win' | 'koikoi' | 'hyper';
+export type SoundKind = 'click' | 'deal' | 'capture' | 'hyper_capture' | 'hyper_chain' | 'hp_hit' | 'ko_blast' | 'win' | 'koikoi' | 'hyper' | 'trap';
 
 let context: AudioContext | undefined;
 let muted = false;
@@ -127,6 +127,11 @@ export function playSound(kind: SoundKind): void {
         tone(audio, f * 1.5, at + i * 0.06, 0.25, 0.025, 'square');
       });
       tone(audio, 1760, at + 0.38, 1.1, 0.1, 'triangle');
+      break;
+    case 'trap':
+      drum(audio, at, 0.85);
+      brush(audio, at + 0.08, 0.24);
+      [880, 659.25, 440, 220].forEach((f, i) => tone(audio, f, at + i * 0.065, 0.2, 0.08, 'sawtooth'));
       break;
     case 'hp_hit':
       drum(audio, at, 0.8);

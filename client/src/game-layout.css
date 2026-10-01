@@ -673,3 +673,11 @@ body:has(.enhanced-game) {
 @media (prefers-reduced-motion: reduce) {
   .music-now-playing a { animation: none; }
 }
+
+/* Trap choices float above the compact status bar; nested buttons must not
+   inherit its absolute-positioned cancel/submit button rule. */
+.enhanced-game .turn-banner .trap-choice-panel {
+  position: absolute; z-index: 45; bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%); width: min(380px, 88vw); white-space: normal;
+}
+.enhanced-game .turn-banner .trap-choice-panel button { position: static; right: auto; font-size: 12px; }
