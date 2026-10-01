@@ -107,10 +107,9 @@ try {
       const forecast = attacker.room.hyper.damagePreviews.find(p => p.cardId === 8 && p.targetId === 9).damage;
       assert.equal(forecast[0].roles,5); assert.equal(forecast[0].power,7);
       const stock = attacker.room.deckCount;
+      assert.match(await attacker.page.locator('.your-hand .hana-card[data-card-id="8"]').getAttribute('title'),/役5/);
+      assert.match(await attacker.page.locator('.hand-slot').filter({has:attacker.page.locator('[data-card-id="8"]')}).innerText(),/力7/);
       await attacker.page.locator('.your-hand .hana-card[data-card-id="8"]').click();
-      await attacker.page.getByText('攻撃内訳',{exact:true}).click();
-      assert.match(await attacker.page.locator('.combat-preview').innerText(),/役5/);
-      await attacker.page.locator('.field-slot .hana-card[data-card-id="9"]').click();
       await until(() => attacker.room.phase === 'finished','KO'); await idle(attacker);
       assert.equal(attacker.room.winner,1); assert.deepEqual(attacker.room.hyper.hp,[0,32]);
       assert.equal(attacker.room.deckCount,stock); assert.deepEqual(attacker.room.events.at(-1).hyper.damage,forecast);
@@ -118,7 +117,7 @@ try {
         assert.equal(await attacker.page.getByRole('meter',{name:`${name}のHP`,exact:true}).evaluate(m => m.value),[0,32][seat]);
       }
       await reload(attacker); assert.deepEqual(attacker.room.hyper.hp,[0,32]);
-      report.cases.push({kind:fixture.kind,forecastEqualsActual:true,stopBeforeDraw:true,reconnect:true});
+      report.cases.push({kind:fixture.kind,forecastEqualsActual:true,singleClick:true,stopBeforeDraw:true,reconnect:true});
     } else {
       if (fixture.kind !== 'snatch_hp') assert.equal(owner.room.hyper.hp,null);
       assert.equal(owner.room.hyper.trapChoices.length,2);
@@ -162,18 +161,14 @@ try {
       if (fixture.kind === 'snatch_hp') {
         const forecast=attacker.room.hyper.damagePreviews.find(p => p.cardId === 8 && p.targetId === 9);
         assert.equal(forecast.uncertain,true); assert.equal(forecast.damage[0].power,7);
+        assert.match(await attacker.page.locator('.your-hand .hana-card[data-card-id="8"]').getAttribute('title'),/罠の効果は未反映/);
       }
       if (fixture.kind === 'draw_choice') {
         await capture(attacker,4); await until(() => attacker.room.phase === 'draw_choice','draw choice'); await idle(attacker);
         assert.deepEqual(attacker.room.legalTargets,[9,10]);
       } else await attacker.page.locator('.your-hand .hana-card[data-card-id="8"]').click();
-      // Single ordinary target submits on hand click outside HP mode.
-      if (fixture.kind === 'snatch_hp') {
-        assert.match(await attacker.page.locator('.field-target-label').innerText(),/罠効果未反映/);
-        await attacker.page.getByText('攻撃内訳',{exact:true}).click();
-        assert.match(await attacker.page.locator('.combat-preview').innerText(),/発動でダメージが変わる可能性/);
-      }
-      if (fixture.kind === 'draw_choice' || fixture.kind === 'snatch_hp') await attacker.page.locator('.field-slot .hana-card[data-card-id="9"]').click();
+      // A single target submits on hand click in both ordinary and HP play.
+      if (fixture.kind === 'draw_choice') await attacker.page.locator('.field-slot .hana-card[data-card-id="9"]').click();
       await until(() => attacker.room.events.some(e => e.hyper?.trapActivations?.length),'trap activation record');
       await until(async () => (await attacker.page.evaluate(() => window.__qaTraps)).length > 0,'trap animation');
       if (kind === 'levy') await attacker.page.screenshot({path:`${output}/live-trap-activation.png`});

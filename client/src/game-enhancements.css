@@ -1699,3 +1699,7 @@ html[data-motion="false"] .player-chain.is-fever { animation: none; }
 @keyframes trap-roulette-roll { from { transform: translateY(0); } to { transform: translateY(var(--trap-stop)); } }
 @keyframes trap-roulette-reveal { from { opacity: .5; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .trap-roulette-strip, .trap-roulette-result { animation: none !important; } }
+
+.hand-attack-preview { position: absolute; bottom: 3px; left: 2px; right: 2px; z-index: 2; display: grid; gap: 1px; padding: 2px 0; color: #fff4df; background: #23142de8; border: 1px solid #bc8dde; border-radius: 4px; text-align: center; pointer-events: none; line-height: 1.15; }
+.hand-attack-preview b { font-size: clamp(8px, 1.1cqw, 11px); }
+.hand-attack-preview small { font-size: clamp(7px, .9cqw, 9px); white-space: nowrap; }

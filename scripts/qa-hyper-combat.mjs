@@ -34,7 +34,7 @@ try {
     await page.waitForFunction(() => document.querySelector('.field-trap-label')?.textContent?.includes('あなたの罠'));
     assert.equal(await page.getByRole('button', { name: '罠を指定', exact: true }).count(), 0);
     await page.locator('.your-hand .hana-card[data-card-id="0"]').click();
-    assert.match(await page.locator('.field-target-label').innerText(), /相手 −4 \/ 力4/);
+    assert.ok((await page.locator('.field-target-label').allTextContents()).some(text => /相手 −4 \/ 力4/.test(text)));
     assert.match(await page.locator('.field-slot .hana-card[data-card-id="1"]').getAttribute('title'), /札2＋初撃2/);
     await page.getByText('攻撃内訳', { exact: true }).click();
     assert.match(await page.locator('.combat-preview').innerText(), /威力4 \/ HP減少4（32→28）/);
@@ -59,7 +59,16 @@ try {
     await page.waitForFunction(() => document.querySelectorAll('.hyper-hp meter').length === 2 && [...document.querySelectorAll('.hyper-hp meter')].every(m => m.value === 0), { timeout: 15000 });
     await page.waitForFunction(() => !document.querySelector('.hp-attack-overlay'), { timeout: 15000 });
     await page.screenshot({ path: `${output}/mutual-ko-${viewport.width}.png`, fullPage: true });
-    report.tests.push({ viewport, trapCancelAndPlacement: true, onePlacementBudget: true, forecastAndBreakdown: true, drawnChoiceForecast: true, readableAttackHistory: true, bothHpZero: true, overflow });
+    for (const label of ['修羅場・即取得','修羅場・まとめ取り']) {
+      await page.getByText('補助UI試験（合成局面）',{exact:true}).click();
+      await page.getByRole('button',{name:label,exact:true}).click();
+      assert.match(await page.locator('.hand-attack-preview').innerText(),/力4/);
+      await page.locator('.your-hand .hana-card[data-card-id="0"]').click();
+      await page.waitForFunction(() => document.querySelector('[data-last-command]') !== null);
+      assert.deepEqual(JSON.parse(await page.locator('[data-last-command]').getAttribute('data-last-command')),{type:'play',cardId:0,targetId:1});
+      assert.equal(await page.locator('.field-target-label').count(),0);
+    }
+    report.tests.push({ viewport, singleClickHp:true, autoMonthlySweepHp:true, trapCancelAndPlacement: true, onePlacementBudget: true, forecastAndBreakdown: true, drawnChoiceForecast: true, readableAttackHistory: true, bothHpZero: true, overflow });
     await context.close();
   }
   assert.deepEqual(report.pageErrors, []);

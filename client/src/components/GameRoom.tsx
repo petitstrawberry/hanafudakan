@@ -33,7 +33,7 @@ import { playSound } from "../lib/audio";
 import { MUSIC_PLAYLISTS, setMusicMode } from "../lib/music";
 import MusicNowPlaying from "./MusicNowPlaying";
 import { getYakuStatuses } from "../lib/yakuStatus";
-import { boardChanged, canCashOutWithContracts, captureTargets, canSetTrap, damageBreakdown, previewFor, previewUncertain, takesAllTargets, trapEffects, trapResult } from "../lib/hyperGame";
+import { boardChanged, canCashOutWithContracts, captureTargets, canSetTrap, damageBreakdown, previewFor, previewUncertain, handAttackPreview, takesAllTargets, trapEffects, trapResult } from "../lib/hyperGame";
 import { fitFieldLayout } from "../lib/fieldLayout";
 import { reconcileFieldSlots, type FieldSlot } from "../lib/fieldSlots";
 import type { PublicGameEvent, RoomView, HyperDamage } from "../lib/types";
@@ -960,7 +960,7 @@ export default function GameRoom({
     if (!canPlay || trapSelecting) return;
     playSound("click");
     const matches = captureTargets(room, id);
-    if ((matches.length > 1 && !takesAllTargets(id, matches)) || (hyperState?.hp && matches.length > 0)) {
+    if (matches.length > 1 && !takesAllTargets(id, matches)) {
       setSelected((current) => (current === id ? null : id));
     } else {
       setSelected(null);
@@ -1385,6 +1385,7 @@ export default function GameRoom({
                   ) : (
                     room.hand.map((id) => {
                       const canCapture = captureTargets(room, id).length > 0;
+                      const attack = canPlay ? handAttackPreview(room, id) : null;
                       return (
                         <div
                           className={`hand-slot ${assist && canCapture && myTurn ? "can-capture" : ""} ${selected === id ? "is-selected" : ""} ${flight?.event.source === "hand" && flight.event.cardId === id ? "card-in-flight" : ""}`}
@@ -1399,7 +1400,11 @@ export default function GameRoom({
                             selected={selected === id}
                             disabled={!canPlay}
                             onClick={() => selectCard(id)}
+                            description={attack?.description}
                           />
+                          {attack && <span className="hand-attack-preview" aria-label={`攻撃予告：威力${attack.power}・HP減少${attack.damage}${attack.uncertain ? "・罠効果未反映" : ""}`}>
+                            <b>力{attack.power}{attack.uncertain ? "?" : ""}</b><small>HP−{attack.damage}</small>
+                          </span>}
                           {assist && canCapture && myTurn && (
                             <span
                               className="hand-match-dot"
