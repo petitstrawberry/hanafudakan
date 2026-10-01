@@ -179,21 +179,32 @@ wss://your-domain.example/api/ws?token=<URLエンコードしたtoken>&room=<roo
 
 ### 公開罠・戦闘予告
 
-ハイパー状態は `traps: [cardId|null, cardId|null]`（所有者順）、`trapReady: [bool,bool]`、`damagePreviews` も含みます。HP上限は32、光契約は `storm`（三光）、`snare`（雨四光）、`aegis`（四光）、`zenith`（五光）。契約の `points` は犠牲にした役の実点数で、増点済みのタネ・短冊・カスも固定1ではありません。
+ハイパー状態は `traps: [cardId|null, cardId|null]`（所有者順）、`trapReady: [bool,bool]`、`damagePreviews` も含みます。HP上限は32で、HP戦を開始するのは `storm` だけ。光契約は `storm`（三光）、`snare`（雨四光）、`aegis`（四光）、`zenith`（五光）。契約の `points` は犠牲にした役の実点数で、増点済みのタネ・短冊・カスも固定1ではありません。
 
 ```json
-{ "type": "trap", "targetId": 9, "boardRevision": 2 }
+{ "type": "trap", "kind": "levy", "targetId": 9, "boardRevision": 2 }
 ```
 
-雨罠を持つ自分の `play` phase だけ、各手番1回、現在の場札を1枚指定できます。配置で手番と `boardRevision` は進みません。古い再配布revision、他人の手番、場にない札、二重配置は一括拒否し、途中状態を残しません。送信前の取消はローカル操作です。印は全員に見え、再接続のsnapshotにも残ります。自分の次手番開始・再配布・終局で消えます。
+伏兵を持つ自分の `play` phase だけ、各手番1回、現在の場札を1枚指定できます。配置で手番と `boardRevision` は進みません。古い再配布revision、他人の手番、場にない札、二重配置は一括拒否し、途中状態を残しません。送信前の取消はローカル操作です。印は全員に見え、再接続のsnapshotにも残ります。種類は `levy`（花力最大4奪取）、`reveal`（残り手札ランダム2枚開示）、`bind`（当該手番の永久倍率成長停止）、`snatch`（罠札奪還）、`swap`（残り手札1枚と山札底を交換）、`tax`（同手番勝利配当25%奪取）、`misfortune`（同手番倍率−0.5）、`scorch`（永久成長倍率最大0.5削除）。サーバーが各手番に8種類から2種類を抽選し、本人の `trapChoices` へ配信します。`kind` は抽選候補の1つに限り、未指定・未知の種類・候補外を拒否します。`trapKinds: [kind|null,kind|null]` は自分の設置罠の種類だけを配信し、相手・観戦者には両方null。取消・snapshot取得・再接続で抽選し直しません。自分の次手番開始・再配布・終局で消えます。
 
-`damagePreviews: [{cardId, targetId, damage: [...]}]` は手番プレイヤーにだけ配信します。`play` はその人の手札、`draw_choice` は公開済みのめくり札の選択肢に限定し、観戦者・相手には空配列です。未公開の山札は予告に使いません。
+`damagePreviews: [{cardId, targetId, uncertain, damage: [...]}]` は手番プレイヤーにだけ配信します。`play` はその人の手札、`draw_choice` は公開済みのめくり札の選択肢に限定し、観戦者・相手には空配列です。未公開の山札は予告に使いません。相手の罠札を取得する予告は `uncertain: true` とし、罠の効果を除外して計算します。種類ごとの予告差から伏せ罠の種類を推測させません。罠がなければfalse。CPUのHP評価も同じ情報制限を使います。
 
-取得の公開イベント `hyper` に `traps` と `damage` の配列を追加します。各レコードは `attacker, defender, kind`（`capture` / `trap`）、`cards, roles, roleGains`（役名と増点文）、`chain, contract, exposure, blocked, power, damage, hpBefore, hpAfter`。`contract` は通常攻撃の初撃値、罠では基礎威力4です。役撃10・攻撃16の上限を適用し、防御後の威力を `power`、残HPで切り詰めた減少を `damage` として区別します。全て整数、初撃のコスト÷3だけ切り捨てます。
+取得の公開イベント `hyper` は `traps, damage, trapActivations, growthSealed, payoutTax, multiplierPenalty` を含みます。`trapActivations: [{owner,victim,cardId,kind,amount}]` は発動した罠だけ公開し、量は徴収の実奪取量、暴露の実開示枚数、足枷は0、奪還・すり替えは実移動枚数、徴税は25（率・決着時の実徴税額ではない）、凶運は2（倍率の四半単位）、焼却は実削除boost（四半単位）です。秘密の手札IDは含めません。足枷は `growthSealed: [bool,bool]` で対象へ表示し、その手番終了で解除します。CHAIN増加・CHAIN値による倍率・追加めくりは止めません。
 
-同じ取得で通常攻撃と罠の両方を解決します。イベントには2つの対象のHP変化があり得ます。両者HP0なら引分け・配当0、片側HP0なら生存側が勝ちます。HP0が生じた取得で追加めくりを停止します。クライアントはイベントの全レコードを順に再生し、カードの演出・各HP着弾・最後の決着snapshotの順で表示します。
+HP攻撃のレコードは `attacker, defender, kind`（現在のゲームでは `capture`）、`cards, roles, roleGains`、`chain, contract, exposure, blocked, power, damage, hpBefore, hpAfter`。`contract` は修羅場の契約者の初回取得だけ1、他は0。`exposure, blocked` は旧イベント表示との互換用で現在0。役撃10・攻撃16の上限を適用し、威力を `power`、残HPで切り詰めた減少を `damage` として区別します。罠はHPダメージを発生させません。
+
+本人だけの `intel: {opponentHand: [cardId...], nextCard: cardId|null}` を追加します。看破・天啓は相手の全手札、暴露は開示した残り札だけ。次の山札は看破・天啓を持つ自分の手番だけ。それ以外と観戦者は空配列/null。公開移動イベントに `intel` を含めず、終局と再配布で古い情報を消します。再接続は現在の権利に基づく情報を復元します。
+
+天啓の月越え選択肢は `handTargets` と `legalTargets` で配信します。2枚以外の複数選択肢でも `targetId` が必要です。同月3枚取りかどうかは札の月も検証し、異なる月の選択肢3枚をまとめて取得させません。自分の初回取得後は通常の月合わせへ戻ります。
+
+HP0の取得で追加めくりを止め、どちらが倒れたか・両者0かを判定します。両者0は引分け・配当0。クライアントは旧イベントを含め全HPレコードを順に再生し、札の動き・HP着弾・決着snapshotの順で表示します。
 
 
 ### 契約効果と成長量
 
 固有の追加めくりは暴走だけ。共通の初回取得1回、CHAINめくり各手番1回と合算して最大4回。反撃めくりは相手が暴走・3CHAIN以上の未契約側に限る。宴は花力＋3、逆転月は倍率＋0.5と相手の花力＋2へ変更。追猟は花力奪取、連筆はCHAIN追加成長、草蔵はカス枚数に応じた花力。追猟・連筆・草蔵は `contracts[].points` を1〜3へ制限した値を強さに使い、実値を `description` に表示する。`bloom, chain, multiplier` と公開イベントの同項目はこれらの効果を反映する。ログは能力名と実際の変化量を含み、再接続後も履歴から確認できる。
+
+
+`payoutTax: [0|25,0|25]` と `multiplierPenalty: [0|2,0|2]` はsnapshotと公開hyperイベントの手番限定状態です。勝利配当の計算は倍率適用後の切り上げ → 徴税率を掛けた切り捨て額を相手へ → 勝者が残額を受け取る順。`projected` / `roundPoints` は勝者の税引後受取額、`scores` は両者の実得点です。勝敗・役点条件は変えません。こいこい・手番終了・再配布・終局・投了で両状態を消去。詳細は `rules.md` の8種類一覧を参照。
+
+奪還の公開移動イベントは元の取得元を `targetIds` へ残し、実際の移動先は `capturedCards` と `trapActivations`（kind=snatch・owner・cardId）で示します。クライアントは罠札だけを所有者へ飛ばし、相手の保持札数を表示します。すり替えは手札・山札の秘密IDをイベントに含めず、本人の次snapshotで手札を更新します。

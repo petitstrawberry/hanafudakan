@@ -50,7 +50,9 @@ export type HyperDamage = {
   hpBefore: number;
   hpAfter: number;
 };
-export type DamagePreview = { cardId: number; targetId: number | null; damage: HyperDamage[] };
+export type DamagePreview = { uncertain?: boolean; cardId: number; targetId: number | null; damage: HyperDamage[] };
+export type TrapKind = "levy" | "reveal" | "bind" | "snatch" | "swap" | "tax" | "misfortune" | "scorch";
+export type TrapActivation = { owner: number; victim: number; cardId: number; kind: TrapKind; amount: number };
 export type HyperState = {
   contracts: HyperContract[][];
   stake: number[];
@@ -67,6 +69,10 @@ export type HyperState = {
   traps?: (number | null)[];
   trapReady?: boolean[];
   damagePreviews?: DamagePreview[];
+  trapChoices?: TrapKind[];
+  trapKinds?: (TrapKind | null)[];
+  intel?: { opponentHand: number[]; nextCard: number | null };
+  growthSealed?: boolean[]; payoutTax?: number[]; multiplierPenalty?: number[];
 };
 export type RoomView = {
   boardRevision?: number;
@@ -117,5 +123,5 @@ export type PublicGameEvent = {
   capturedCards: number[][];
   deckCount: number;
   requiresChoice: boolean;
-  hyper?: (Pick<HyperState, "chain" | "bloom" | "multiplier" | "hp"> & { counterDraw?: boolean; traps?: (number | null)[]; damage?: HyperDamage[] }) | null;
+  hyper?: (Pick<HyperState, "chain" | "bloom" | "multiplier" | "hp"> & { counterDraw?: boolean; traps?: (number | null)[]; damage?: HyperDamage[]; trapActivations?: TrapActivation[]; growthSealed?: boolean[] }) | null;
 };

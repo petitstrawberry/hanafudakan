@@ -32,7 +32,7 @@ import { playSound } from "../lib/audio";
 import { MUSIC_PLAYLISTS, setMusicMode } from "../lib/music";
 import MusicNowPlaying from "./MusicNowPlaying";
 import { getYakuStatuses } from "../lib/yakuStatus";
-import { boardChanged, canCashOutWithContracts, captureTargets, canSetTrap, damageBreakdown, previewFor } from "../lib/hyperGame";
+import { boardChanged, canCashOutWithContracts, captureTargets, canSetTrap, damageBreakdown, previewFor, previewUncertain, takesAllTargets, trapEffects, trapResult } from "../lib/hyperGame";
 import { fitFieldLayout } from "../lib/fieldLayout";
 import { reconcileFieldSlots, type FieldSlot } from "../lib/fieldSlots";
 import type { PublicGameEvent, RoomView, HyperDamage } from "../lib/types";
@@ -122,6 +122,12 @@ const signature = (room: RoomView) =>
     room.hyper?.multiplier,
     room.hyper?.traps,
     room.hyper?.trapReady,
+    room.hyper?.trapChoices,
+    room.hyper?.trapKinds,
+    room.hyper?.intel,
+    room.hyper?.growthSealed,
+    room.hyper?.payoutTax,
+    room.hyper?.multiplierPenalty,
     room.hyper?.damagePreviews,
   ]);
 const sleep = (duration: number) =>
@@ -157,6 +163,8 @@ export default function GameRoom({
   latest.current = incoming;
   const [selected, setSelected] = useState<number | null>(null);
   const [trapSelecting, setTrapSelecting] = useState(false);
+  const [selectedTrapKind, setSelectedTrapKind] = useState<import("../lib/types").TrapKind | null>(null);
+  const [trapActivation, setTrapActivation] = useState<import("../lib/types").TrapActivation | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
   const [assist, setAssist] = useState(
     () => localStorage.getItem("hana-assist") !== "false",
@@ -290,7 +298,7 @@ export default function GameRoom({
     !connected || reconnectPending.current || busy || animating || submitting || dealing;
   const canPlay = myTurn && playing && !locked;
   const trapReady = canSetTrap(room);
-  useEffect(() => { setTrapSelecting(false); }, [boardKey, room.turn, room.phase, trapReady]);
+  useEffect(() => { setTrapSelecting(false); setSelectedTrapKind(null); }, [boardKey, room.turn, room.phase, trapReady]);
   const activeCard = drawnChoice ? room.drawnCard : selected;
   const targets =
     activeCard === null
@@ -404,6 +412,7 @@ export default function GameRoom({
       setLandingCard(null);
       setHyperCutIn(null);
       setHpAttack(null);
+      setTrapActivation(null);
       setDealCards([]);
       setDealing(false);
       window.clearTimeout(hyperFlashTimer.current);
@@ -533,8 +542,9 @@ export default function GameRoom({
           )
         : targetPositions[0]?.position || center;
       const destinationFor = (id: number): Position => {
+        const recipient = event.hyper?.trapActivations?.find(hit => hit.kind === "snatch" && hit.cardId === id)?.owner ?? event.player;
         const pile = root.current?.querySelector(
-          `[data-capture-player="${event.player}"] [data-capture-kind="${cards[id].kind}"] .captured-yaku-scroll`,
+          `[data-capture-player="${recipient}"] [data-capture-kind="${cards[id].kind}"] .captured-yaku-scroll`,
         );
         const pileBounds = pile?.getBoundingClientRect();
         const visible =
@@ -545,9 +555,9 @@ export default function GameRoom({
           (visible
             ? pile
             : table.current?.querySelector(
-                `[data-player-index="${event.player}"] .player-score`,
+                `[data-player-index="${recipient}"] .player-score`,
               )) || null,
-          { ...center, y: center.y + (isOwn ? 200 : -130) },
+          { ...center, y: center.y + (recipient === own ? 200 : -130) },
         );
         return {
           ...anchor,
@@ -582,7 +592,7 @@ export default function GameRoom({
         hyper: hyperCharged,
       };
       setAnnouncement(
-        `${event.hyper?.counterDraw ? "反撃！ " : ""}${before.players[event.player]?.name || "プレイヤー"} · ${event.source === "hand" ? "手札から" : "山札から"} ${nameOf(event.cardId)}${event.requiresChoice ? " · 合わせる札を選択" : event.captured ? ` · ${event.targetIds.length + 1}枚獲得` : " · 場へ"}`,
+        `${event.hyper?.counterDraw ? "反撃！ " : ""}${before.players[event.player]?.name || "プレイヤー"} · ${event.source === "hand" ? "手札から" : "山札から"} ${nameOf(event.cardId)}${event.requiresChoice ? " · 合わせる札を選択" : event.captured ? ` · ${event.targetIds.length + 1 - (event.hyper?.trapActivations?.filter(hit => hit.kind === "snatch").reduce((sum, hit) => sum + hit.amount, 0) ?? 0)}枚獲得${event.hyper?.trapActivations?.some(hit => hit.kind === "snatch") ? " · 罠札は奪還" : ""}` : " · 場へ"}`,
       );
       if (event.source === "draw") {
         setFlight(
@@ -704,9 +714,18 @@ export default function GameRoom({
             if (!alive.current || epoch !== playbackEpoch.current) return;
           }
           setHpAttack(null);
+          setTrapActivation(null);
         }
       }
       updateView(nextView);
+      for (const activation of event.hyper?.trapActivations ?? []) {
+        setTrapActivation(activation);
+        setAnnouncement(`トラップ札発動！！ ${trapEffects[activation.kind].name} · ${trapResult(activation)}`);
+        playSound("trap");
+        await sleep(animate ? 1100 : 650);
+        if (!alive.current || epoch !== playbackEpoch.current) return;
+        setTrapActivation(null);
+      }
       const combo = event.hyper?.chain[event.player] ?? 0;
       if (!event.hyper?.hp?.includes(0) && hyperCharged && combo >= 3 && Math.floor(combo / 3) > Math.floor((before.hyper?.chain[event.player] ?? 0) / 3)) {
         setCelebration(`${combo} CHAIN · ×${((event.hyper?.multiplier?.[event.player] ?? 100) / 100).toFixed(2)}`);
@@ -764,6 +783,7 @@ export default function GameRoom({
             setRoleDetail(null);
             setFlight(null);
             setHpAttack(null);
+            setTrapActivation(null);
             announcedRoles.current = nextRoom.yaku.map((roles) =>
               new Map(roles.map((role) => [role.name, role.points])),
             );
@@ -802,6 +822,7 @@ export default function GameRoom({
           if (epoch !== playbackEpoch.current) {
             setFlight(null);
             setHpAttack(null);
+            setTrapActivation(null);
             setLandingCard(null);
             setCue(null);
             continue;
@@ -909,6 +930,7 @@ export default function GameRoom({
             updateView(latest.current);
           setAnimating(false);
           setHpAttack(null);
+          setTrapActivation(null);
           setDealCards([]);
           setDealing(false);
           setCue(null);
@@ -936,7 +958,7 @@ export default function GameRoom({
     if (!canPlay || trapSelecting) return;
     playSound("click");
     const matches = captureTargets(room, id);
-    if (matches.length === 2 || (hyperState?.hp && matches.length > 0)) {
+    if ((matches.length > 1 && !takesAllTargets(id, matches)) || (hyperState?.hp && matches.length > 0)) {
       setSelected((current) => (current === id ? null : id));
     } else {
       setSelected(null);
@@ -948,8 +970,8 @@ export default function GameRoom({
     }
   };
   const selectField = (id: number) => {
-    if (trapSelecting && canPlay && trapReady) {
-      submit({ type: "trap", targetId: id, boardRevision: room.boardRevision ?? 0 });
+    if (trapSelecting && canPlay && trapReady && selectedTrapKind) {
+      submit({ type: "trap", kind: selectedTrapKind, targetId: id, boardRevision: room.boardRevision ?? 0 });
       setTrapSelecting(false);
       return;
     }
@@ -974,7 +996,7 @@ export default function GameRoom({
               ? drawnChoice
                 ? "めくり札です。取る場札を1枚選んでください。"
                 : trapSelecting
-                  ? "罠にする場札を1枚選んでください（相手取得で4ダメージ）。"
+                  ? selectedTrapKind ? `『${trapEffects[selectedTrapKind].name}』を仕掛ける場札を選んでください。` : "抽選された2種類から罠を選んでください。"
                 : selected !== null
                   ? hyperState?.hp
                     ? "場札のダメージ予告を確認して、1枚選んでください。"
@@ -1187,14 +1209,14 @@ export default function GameRoom({
                   koikoi={room.koikoi[opponent]}
                   dealer={room.dealer === opponent}
                 />
-                <div className="opponent-hand">
+                <div className="opponent-hand" aria-label={room.hyper?.intel?.opponentHand.length ? "看破・暴露で判明した相手の手札" : "相手の伏せた手札"}>
                   {Array.from(
                     { length: room.players[opponent]?.handCount || 0 },
                     (_, index) => (
                       <Card
                         key={index}
-                        id={0}
-                        back
+                        id={room.hyper?.intel?.opponentHand[index] ?? 0}
+                        back={room.hyper?.intel?.opponentHand[index] === undefined}
                         small
                         className={
                           flight?.event.source === "hand" &&
@@ -1279,7 +1301,8 @@ export default function GameRoom({
                             </span>}
                             {targets.includes(id) && myTurn && !animating && !trapSelecting && (
                               <span className="field-target-label">
-                                {targets.length === 3 ? "まとめ取り" : "取る"}
+                                {activeCard !== null && takesAllTargets(activeCard, targets) ? "まとめ取り" : "取る"}
+                                {activeCard !== null && previewUncertain(room, activeCard, id) && <small>罠効果未反映</small>}
                                 {activeCard !== null && previewFor(room, activeCard, id).map((hit, i) => <small key={i} title={damageBreakdown(hit)}>
                                   {hit.kind === "trap" ? "罠 " : ""}{hit.defender === own ? "自分" : "相手"} −{hit.damage} / 力{hit.power}
                                 </small>)}
@@ -1300,9 +1323,12 @@ export default function GameRoom({
                     className={`connection-dot ${connected ? "online" : ""}`}
                   />
                   <span className="turn-status-text" title={status}>{status}</span>
-                  {activeCard === null && hyperState && !locked && !trapSelecting && room.log.some(line => /暴走！|追猟！|連筆！|宴！|草蔵！|倍喰い！|逆転月！/.test(line)) && <details className="combat-preview contract-history">
+                  {activeCard === null && hyperState?.intel?.nextCard != null && <details className="combat-preview private-intel">
+                    <summary>看破・天啓 · 次の山札</summary><div><Card id={hyperState.intel.nextCard} small /><span>{nameOf(hyperState.intel.nextCard)} · 自分だけに見えています</span></div>
+                  </details>}
+                  {activeCard === null && hyperState && !locked && !trapSelecting && room.log.some(line => /暴走！|追猟！|連筆！|宴！|草蔵！|倍喰い！|逆転月！|天啓！|トラップ札発動/.test(line)) && <details className="combat-preview contract-history">
                     <summary>契約の発動</summary>
-                    <div>{room.log.filter(line => /暴走！|追猟！|連筆！|宴！|草蔵！|倍喰い！|逆転月！/.test(line)).slice(-8).map((line, i) => <p key={i}>{line}</p>)}</div>
+                    <div>{room.log.filter(line => /暴走！|追猟！|連筆！|宴！|草蔵！|倍喰い！|逆転月！|天啓！|トラップ札発動/.test(line)).slice(-8).map((line, i) => <p key={i}>{line}</p>)}</div>
                   </details>}
                   {activeCard === null && hyperState?.hp && !locked && !trapSelecting && room.log.some(line => line.includes("HP減少")) && <details className="combat-preview combat-history">
                     <summary>攻撃履歴</summary>
@@ -1311,10 +1337,17 @@ export default function GameRoom({
                   {activeCard !== null && hyperState?.hp && !locked && <details className="combat-preview">
                     <summary>攻撃内訳</summary>
                     <div>{targets.map(target => <p key={target}><b>{nameOf(target)}</b><br />
+                      {previewUncertain(room, activeCard!, target) && <span>伏せ罠の効果は未反映。発動でダメージが変わる可能性があります。<br /></span>}
                       {previewFor(room, activeCard!, target).map((hit, i) => <span key={i}>{hit.defender === own ? "自分" : "相手"}：{damageBreakdown(hit)}<br /></span>)}
                     </p>)}</div>
                   </details>}
-                  {trapReady && canPlay && selected === null && <button aria-pressed={trapSelecting} onClick={() => { setSelected(null); setTrapSelecting(v => !v); }}>
+                  {trapSelecting && trapReady && selectedTrapKind === null && <div className="trap-choice-panel" aria-label="罠の抽選候補">
+                    <strong>抽選された罠から選択</strong>
+                    {(hyperState?.trapChoices ?? []).map(kind => <button key={kind} aria-pressed={selectedTrapKind === kind} onClick={() => setSelectedTrapKind(kind)} title={trapEffects[kind].description}>
+                      <b>{trapEffects[kind].name}</b><small>{trapEffects[kind].description}</small>
+                    </button>)}
+                  </div>}
+                  {trapReady && canPlay && selected === null && <button aria-pressed={trapSelecting} onClick={() => { setSelected(null); setSelectedTrapKind(null); setTrapSelecting(v => !v); }}>
                     {trapSelecting ? "罠を取消" : "罠を指定"}
                   </button>}
                   {selected !== null && !locked && (
@@ -1699,6 +1732,12 @@ export default function GameRoom({
           document.body,
         )}
       {flight && createPortal(<MoveOverlay flight={flight} />, document.body)}
+      {trapActivation && createPortal(<div className="trap-activation-overlay" role="status" aria-live="polite">
+        <div className="trap-activation-card"><Card id={trapActivation.cardId} /><small>TRAP CARD</small></div>
+        <strong>トラップ札発動！！</strong><h2>{trapEffects[trapActivation.kind].name}</h2>
+        <p>{room.players[trapActivation.owner]?.name} → {room.players[trapActivation.victim]?.name}</p>
+        <b>{trapResult(trapActivation)}</b>
+      </div>, document.body)}
       {counterCelebration && celebrationOverlay && createPortal(celebrationOverlay, document.body)}
       {hpAttack && createPortal(<HpAttackOverlay key={`${hpAttack.sequence}:${hpAttack.stage}`} attack={hpAttack} />, document.body)}
       {dealCards.length > 0 && createPortal(<div className="opening-deal-overlay" aria-hidden="true">
@@ -1849,6 +1888,9 @@ function HyperPlayerStatus({ state, index, name }: {
         <span className={`player-chain ${chain >= 3 ? "is-fever" : ""}`} key={chain}>
           <b>{contracts.length ? chain : "—"}</b> CHAIN
         </span>
+        {!!state.payoutTax?.[index] && <span className="growth-sealed">配当{state.payoutTax[index]}%徴税中</span>}
+        {!!state.multiplierPenalty?.[index] && <span className="growth-sealed">凶運 −{state.multiplierPenalty[index] / 4}</span>}
+        {state.growthSealed?.[index] && <span className="growth-sealed">倍率成長封印</span>}
         <span className="player-hyper-bank">賭け <b>{state.stake[index]}</b> · 花力 <b>{state.bloom[index]}</b></span>
         <details className="player-contract-details">
           <summary>{contracts.length ? contracts.map(c => c.name).join("・") : "未契約"}</summary>
@@ -1859,7 +1901,7 @@ function HyperPlayerStatus({ state, index, name }: {
             {contracts.length > 0 && <p>あがりには倍率前の役点合計が{Math.max(...contracts.map(c => c.points))}文を超え、最後の契約後にこいこいが必要（{state.cashoutKoiReady?.[index] ? "済" : "未"}）。複数契約時は最大値を採用。K.O.には適用しません。</p>}
             <p>倍率は契約・連鎖・こいこい・能力で上昇（最大×8）。賭け金と花力は勝った時だけ得点になります。</p>
             {contracts.map(c => <p key={c.id}><b>{c.name}</b>（{c.source}・犠牲{c.points}文） · {c.description}</p>)}
-            {state.hp && <p>修羅場：札枚数＋新成立・増点した役の文（最大10）＋3CHAINから1＋各手番初撃の契約威力。合計16まで、防御で軽減。倍率・賭け金は攻撃力に含めません。罠は別の4攻撃。双方HP0は相打ち・配当なし。役あがりも可能。</p>}
+            {state.hp && <p>修羅場：札枚数＋新成立・増点した役の文（最大10）＋3CHAINから1＋修羅場契約者の各手番初撃1。合計16まで。倍率・賭け金は攻撃力に含めません。罠は取り札・手札・花力・配当・倍率に作用します。伏せ罠の効果は攻撃予告に含めません。双方HP0は相打ち・配当なし。役あがりも可能。</p>}
           </div>
         </details>
       </div>

@@ -171,10 +171,11 @@ fn hyper_strategy_simulation() {
     }
 }
 #[test]
-#[ignore = "seeded light-contract combat tempo comparison"]
+#[ignore = "seeded distinct light-contract effects and combat tempo comparison"]
 fn hyper_light_contract_simulation() {
     let seeds: u64 = std::env::var("HYPER_SIM_SEEDS").ok().and_then(|n| n.parse().ok()).unwrap_or(2000);
     assert!(seeds > 0, "HYPER_SIM_SEEDS must be positive");
+    let isolated = std::env::var("HYPER_SIM_ISOLATED").is_ok_and(|value| value == "true");
     for (role, cards) in [("三光", vec![0,8,28]), ("雨四光", vec![0,8,28,40]), ("四光", vec![0,8,28,44]), ("五光", vec![0,8,28,40,44])] {
         let mut wins = [0; 3];
         let mut knockouts = 0;
@@ -185,6 +186,11 @@ fn hyper_light_contract_simulation() {
         let mut defender_turns = Vec::new();
         let mut full_hp_turn_kos = 0;
         let mut ko_captures = Vec::new();
+        let mut traps_fired = 0;
+        let mut trap_kinds = std::collections::BTreeMap::new();
+        let mut cross_month_captures = 0;
+        let mut hp_starts = 0;
+        let mut payouts: [Vec<u32>; 2] = [vec![], vec![]];
         for seed in 0..seeds {
             for seat in 0..2 {
                 let mut game = Game::with_rng(1, true, StdRng::seed_from_u64(seed));
@@ -210,7 +216,21 @@ fn hyper_light_contract_simulation() {
                         turns += 1;
                         answers += usize::from(actor != seat);
                     }
-                    game.cpu_action();
+                    if isolated && game.phase == Phase::Decision {
+                        if game.can_cash_out(game.turn) { game.decision(game.turn, false).unwrap(); }
+                        else if game.exhausted() { game.settle(None, 0); }
+                        else { game.decision(game.turn, true).unwrap(); }
+                    } else { game.cpu_action(); }
+                    hp_starts += usize::from(hp.is_none() && game.hyper_hp.is_some());
+                    for event in game.events.iter().filter(|e| e.id > seq) {
+                        traps_fired += event.hyper.as_ref().map_or(0, |h| h.trap_activations.len());
+                        if let Some(beat) = &event.hyper {
+                            for activation in &beat.trap_activations {
+                                *trap_kinds.entry(activation.kind.name()).or_insert(0usize) += 1;
+                            }
+                        }
+                        cross_month_captures += usize::from(event.target_ids.iter().any(|&c| month(c) != month(event.card_id)));
+                    }
                     full_hp_turn_kos += usize::from(turn_start_hp.is_some_and(|h| h[1 - actor] == duel_hp()) && hp.is_some_and(|h| h[1 - actor] > 0) && game.hyper_hp.is_some_and(|h| h[1 - actor] == 0));
                     takes += game.events.iter().filter(|e| e.id > seq && e.captured).count();
                     if let (Some(before), Some(after)) = (hp, game.hyper_hp) {
@@ -226,7 +246,11 @@ fn hyper_light_contract_simulation() {
                     assert!(steps < 400, "{role} stalled seed {seed}");
                     if game.phase == Phase::Finished { break; }
                 }
-                match game.winner { Some(p) if p == seat => wins[0] += 1, Some(_) => wins[1] += 1, None => wins[2] += 1 }
+                match game.winner {
+                    Some(p) if p == seat => { wins[0] += 1; payouts[0].push(game.round_points); }
+                    Some(_) => { wins[1] += 1; payouts[1].push(game.round_points); }
+                    None => wins[2] += 1,
+                }
                 knockouts += usize::from(game.hyper_hp.is_some_and(|hp| hp.contains(&0)));
                 if game.hyper_hp.is_some_and(|h| h.contains(&0)) { ko_captures.push(takes); }
                 captures.push(takes);
@@ -236,8 +260,10 @@ fn hyper_light_contract_simulation() {
             }
         }
         captures.sort_unstable(); actions.sort_unstable(); combat_turns.sort_unstable(); defender_turns.sort_unstable(); ko_captures.sort_unstable();
+        for values in &mut payouts { values.sort_unstable(); }
+        let payout_medians = payouts.each_ref().map(|v| v.get(v.len()/2).copied());
         let n = captures.len();
-        println!("HYPER_LIGHT {}", json!({"role":role,"seeds":seeds,"mirrored":true,"hp":duel_hp(),"rounds":n,"contractorWinsDefenderWinsDraws":wins,"knockouts":knockouts,"capturesMedian":captures[n/2],"capturesP95":captures[n*95/100],"capturesMax":captures[n-1],"actionsMedian":actions[n/2],"actionsMax":actions[n-1],"hpLossPerAction":damage,"combatTurnsMedian":combat_turns[n/2],"defenderTurnsMedian":defender_turns[n/2],"fullHpTurnKos":full_hp_turn_kos,"koCapturesMedian":ko_captures.get(ko_captures.len()/2)}));
+        println!("HYPER_LIGHT {}", json!({"role":role,"seeds":seeds,"mirrored":true,"hp":duel_hp(),"isolated":isolated,"winningPayoutMedians":payout_medians,"rounds":n,"contractorWinsDefenderWinsDraws":wins,"knockouts":knockouts,"laterHpStarts":hp_starts,"trapsFired":traps_fired,"trapKindCounts":trap_kinds,"crossMonthCaptures":cross_month_captures,"capturesMedian":captures[n/2],"capturesP95":captures[n*95/100],"capturesMax":captures[n-1],"actionsMedian":actions[n/2],"actionsMax":actions[n-1],"hpLossPerAction":damage,"turnsMedian":combat_turns[n/2],"defenderTurnsMedian":defender_turns[n/2],"fullHpTurnKos":full_hp_turn_kos,"koCapturesMedian":ko_captures.get(ko_captures.len()/2)}));
     }
 }
 
