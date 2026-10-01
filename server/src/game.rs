@@ -4,7 +4,7 @@
 //! owns this state; clients receive a view that hides the other hand and stock.
 
 use rand::seq::SliceRandom;
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 const BRIGHTS: [u8; 5] = [0, 8, 28, 40, 44];
@@ -16,11 +16,12 @@ const DUEL_DAMAGE_LIMIT: u8 = 16;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum TrapKind { Levy, Reveal, Bind }
+pub enum TrapKind { Levy, Reveal, Bind, Snatch, Swap, Tax, Misfortune, Scorch }
 
 impl TrapKind {
+    const ALL: [Self; 8] = [Self::Levy, Self::Reveal, Self::Bind, Self::Snatch, Self::Swap, Self::Tax, Self::Misfortune, Self::Scorch];
     fn name(self) -> &'static str {
-        match self { Self::Levy => "徴収", Self::Reveal => "暴露", Self::Bind => "足枷" }
+        match self { Self::Levy => "徴収", Self::Reveal => "暴露", Self::Bind => "足枷", Self::Snatch => "奪還", Self::Swap => "すり替え", Self::Tax => "徴税", Self::Misfortune => "凶運", Self::Scorch => "焼却" }
     }
 }
 
@@ -63,6 +64,7 @@ pub struct HyperDamage {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DamagePreview {
+    pub uncertain: bool,
     pub card_id: u8,
     pub target_id: Option<u8>,
     pub damage: Vec<HyperDamage>,
@@ -98,6 +100,8 @@ pub struct HyperBeat {
     pub damage: Vec<HyperDamage>,
     pub trap_activations: Vec<TrapActivation>,
     pub growth_sealed: [bool; 2],
+    pub payout_tax: [u8; 2],
+    pub multiplier_penalty: [u8; 2],
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -165,6 +169,8 @@ pub struct HyperState {
     pub trap_kinds: [Option<TrapKind>; 2],
     pub intel: PrivateIntel,
     pub growth_sealed: [bool; 2],
+    pub payout_tax: [u8; 2],
+    pub multiplier_penalty: [u8; 2],
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -230,6 +236,8 @@ pub struct Game {
     hyper_trap_activations: Vec<TrapActivation>,
     hyper_revealed: [Vec<u8>; 2],
     hyper_growth_sealed: [bool; 2],
+    hyper_payout_tax: [u8; 2],
+    hyper_multiplier_penalty: [u8; 2],
     hyper_trap_used: [bool; 2],
     hyper_attack_used: [bool; 2],
     hyper_damage: Vec<HyperDamage>,
@@ -292,6 +300,8 @@ impl Game {
             hyper_trap_activations: vec![],
             hyper_revealed: [vec![], vec![]],
             hyper_growth_sealed: [false; 2],
+            hyper_payout_tax: [0; 2],
+            hyper_multiplier_penalty: [0; 2],
             hyper_trap_used: [false; 2],
             hyper_attack_used: [false; 2],
             hyper_damage: vec![],
@@ -399,7 +409,7 @@ impl Game {
                 game.advance_turn();
             } else {
                 let round_points = if game.hyper {
-                    game.hyper_payout(player, 0)
+                    game.hyper_gross_payout(player, 0)
                 } else {
                     let multiplier = if points >= 7 { 2 } else { 1 }
                         * if game.koikoi[1 - player] > 0 { 2 } else { 1 };
@@ -441,6 +451,8 @@ impl Game {
             game.hyper_trap_choices = [vec![], vec![]];
             game.hyper_revealed = [vec![], vec![]];
             game.hyper_growth_sealed = [false; 2];
+            game.hyper_payout_tax = [0; 2];
+            game.hyper_multiplier_penalty = [0; 2];
             game.hyper_pending_draws = [0; 2];
             game.phase = Phase::Finished;
             game.winner = Some(1 - player);
@@ -623,6 +635,8 @@ impl Game {
             trap_kinds: std::array::from_fn(|p| if player == Some(p) && self.hyper_traps[p].is_some() { self.hyper_trap_kinds[p] } else { None }),
             intel: player.map(|p| self.private_intel(p)).unwrap_or_default(),
             growth_sealed: self.hyper_growth_sealed,
+            payout_tax: self.hyper_payout_tax,
+            multiplier_penalty: self.hyper_multiplier_penalty,
         })
     }
 
@@ -743,6 +757,8 @@ impl Game {
         self.hyper_trap_activations.clear();
         self.hyper_revealed = [vec![], vec![]];
         self.hyper_growth_sealed = [false; 2];
+        self.hyper_payout_tax = [0; 2];
+        self.hyper_multiplier_penalty = [0; 2];
         self.hyper_damage.clear();
         self.hyper_boosts = [0; 2];
         self.hyper_turn_captures = [0; 2];
@@ -908,6 +924,9 @@ impl Game {
                 self.hyper_bloom[1 - player] += 2;
                 self.push_log(format!("{}番手、天啓！月を越えて取得。代償として相手の花力＋2。", player + 1));
             }
+            // A recovered trap card belongs to its owner, so it grants no
+            // category reward, new role or attack power to the victim.
+            acquired.retain(|id| self.captured[player].contains(id));
             self.queue_hyper_effects(player, &acquired);
             if self.hyper_hp.is_some() {
                 let first = !self.hyper_attack_used[player];
@@ -926,7 +945,7 @@ impl Game {
             "{}番手、{}月の札を{}枚獲得。",
             player + 1,
             month(card) + 1,
-            taken.len() + 1
+            taken.iter().chain(std::iter::once(&card)).filter(|id| self.captured[player].contains(id)).count()
         ));
         taken
     }
@@ -982,9 +1001,15 @@ impl Game {
         let base = [100, 175, 250, 350][self.hyper_contracts[player].len().min(3)];
         let streak = u32::from(self.hyper_chain[player].min(12) / 2) * 25;
         (base + streak + u32::from(self.hyper_boosts[player]) * 25).min(800)
+            .saturating_sub(u32::from(self.hyper_multiplier_penalty[player]) * 25).max(50)
     }
 
     fn hyper_payout(&self, player: usize, minimum: u32) -> u32 {
+        let gross = self.hyper_gross_payout(player, minimum);
+        gross - gross * u32::from(self.hyper_payout_tax[player]) / 100
+    }
+
+    fn hyper_gross_payout(&self, player: usize, minimum: u32) -> u32 {
         let roles = total(&evaluate(&self.active_captured(player))).max(minimum);
         ((roles + self.hyper_stake[player] + self.hyper_bloom[player])
             * self.hyper_multiplier(player)).div_ceil(100)
@@ -1000,7 +1025,7 @@ impl Game {
             } else {
                 let winner = usize::from(hp[0] == 0);
                 self.push_log(format!("K.O.！{}番手が修羅場を制す！", winner + 1));
-                self.settle(Some(winner), self.hyper_payout(winner, 8));
+                self.settle(Some(winner), self.hyper_gross_payout(winner, 8));
             }
             return true;
         }
@@ -1044,6 +1069,36 @@ impl Game {
                 self.hyper_growth_sealed[victim] = true;
                 (0, "この取得から手番終了まで倍率の永久成長を停止。CHAIN・めくりは継続".into())
             }
+            TrapKind::Snatch => {
+                let amount = u32::from(self.captured[victim].contains(&card_id));
+                self.captured[victim].retain(|id| *id != card_id);
+                if amount > 0 { self.captured[owner].push(card_id); }
+                (amount, format!("罠札{amount}枚を奪還。取り札・役・攻撃力は奪還後に計算"))
+            }
+            TrapKind::Swap => {
+                let amount = if self.hands[victim].is_empty() || self.deck.is_empty() { 0 } else {
+                    let index = self.rng.gen_range(0..self.hands[victim].len());
+                    // Stock top is pop(); exchange with the bottom so the
+                    // current draw order and CHAIN opportunities are preserved.
+                    std::mem::swap(&mut self.hands[victim][index], &mut self.deck[0]);
+                    self.hands[victim].sort_unstable();
+                    1
+                };
+                (amount, format!("残り手札{amount}枚を山札の底と交換（札の内容は非公開）"))
+            }
+            TrapKind::Tax => {
+                self.hyper_payout_tax[victim] = 25;
+                (25, "この手番に勝った場合、勝利配当の25%を罠の所有者へ（切り捨て）".into())
+            }
+            TrapKind::Misfortune => {
+                self.hyper_multiplier_penalty[victim] = 2;
+                (2, "手番終了まで倍率−0.5（最低×0.5）。CHAIN・めくりは継続".into())
+            }
+            TrapKind::Scorch => {
+                let amount = self.hyper_boosts[victim].min(2);
+                self.hyper_boosts[victim] -= amount;
+                (u32::from(amount), format!("蓄積した成長倍率−{}（CHAINは維持・再成長可能）", f32::from(amount) / 4.0))
+            }
         };
         self.hyper_trap_activations.push(TrapActivation { owner, victim, card_id, kind, amount });
         self.push_log(format!("トラップ札発動！！{}番手の『{}』→{}番手：{}。", owner + 1, kind.name(), victim + 1, effect));
@@ -1079,8 +1134,13 @@ impl Game {
             for target in targets {
                 // Only the visible acquisition is simulated, never the next stock card.
                 let mut preview = self.clone();
+                let taken = if Self::takes_three(card, &matches) { matches.clone() }
+                    else { target.into_iter().collect() };
+                let uncertain = self.hyper_traps[1 - player].is_some_and(|id| taken.contains(&id));
+                // The hidden kind must not be discoverable by comparing forecasts.
+                preview.hyper_traps[1 - player] = None;
                 preview.capture_or_place(player, card, &matches, target);
-                result.push(DamagePreview { card_id: card, target_id: target, damage: preview.hyper_damage });
+                result.push(DamagePreview { uncertain, card_id: card, target_id: target, damage: preview.hyper_damage });
             }
         }
         result
@@ -1215,6 +1275,8 @@ impl Game {
         self.hyper_trap_activations.clear();
         self.hyper_revealed = [vec![], vec![]];
         self.hyper_growth_sealed = [false; 2];
+        self.hyper_payout_tax = [0; 2];
+        self.hyper_multiplier_penalty = [0; 2];
         self.hyper_damage.clear();
         for player in 0..2 { self.reset_hyper_turn(player); }
         self.push_log(format!("再配布！双方の手札{}枚・場{}枚・山札{}枚。", deal_count, deal_count, self.deck.len()));
@@ -1245,8 +1307,10 @@ impl Game {
         self.hyper_attack_used[player] = false;
         self.hyper_trap_used[player] = false;
         self.hyper_growth_sealed[player] = false;
+        self.hyper_payout_tax[player] = 0;
+        self.hyper_multiplier_penalty[player] = 0;
         self.hyper_revealed[player].clear();
-        let mut choices = vec![TrapKind::Levy, TrapKind::Reveal, TrapKind::Bind];
+        let mut choices = TrapKind::ALL.to_vec();
         if self.has_hyper_contract(player, "snare") { choices.shuffle(&mut self.rng); choices.truncate(2); }
         else { choices.clear(); }
         self.hyper_trap_choices[player] = choices;
@@ -1306,11 +1370,20 @@ impl Game {
     }
 
     fn settle(&mut self, winner: Option<usize>, points: u32) {
+        let cut = winner.filter(|_| self.hyper).map_or(0, |player|
+            points * u32::from(self.hyper_payout_tax[player]) / 100);
+        let points = points - cut;
+        if let Some(player) = winner.filter(|_| cut > 0) {
+            self.scores[1 - player] += cut;
+            self.push_log(format!("徴税：勝利配当から{}文を{}番手へ。勝者の受取{}文。", cut, 2 - player, points));
+        }
         self.hyper_traps = [None; 2];
         self.hyper_trap_kinds = [None; 2];
         self.hyper_trap_choices = [vec![], vec![]];
         self.hyper_revealed = [vec![], vec![]];
         self.hyper_growth_sealed = [false; 2];
+        self.hyper_payout_tax = [0; 2];
+        self.hyper_multiplier_penalty = [0; 2];
         self.winner = winner;
         self.round_points = points;
         if let Some(player) = winner {
@@ -1354,6 +1427,7 @@ impl Game {
             total(&evaluate(&potential)) as i32 - total(&evaluate(&self.active_captured(player))) as i32;
         let combat = if self.hyper_hp.is_some() {
             let mut preview = self.clone();
+            preview.hyper_traps[1 - player] = None;
             preview.capture_or_place(player, card, &matches, target);
             if preview.hyper_hp.is_some_and(|hp| hp[player] == 0) { -10000 }
             else if preview.hyper_hp.is_some_and(|hp| hp[1 - player] == 0) { 10000 }
@@ -1404,6 +1478,8 @@ impl Game {
                 damage,
                 trap_activations,
                 growth_sealed: self.hyper_growth_sealed,
+                payout_tax: self.hyper_payout_tax,
+                multiplier_penalty: self.hyper_multiplier_penalty,
                 counter_draw: source != PublicGameEventSource::Hand
                     && self.counter_draw_budget(player) > 0
                     && self.hyper_draws_used[player] > 0,
@@ -1423,7 +1499,7 @@ fn hyper_contract_for_role(role: &str) -> Option<HyperContract> {
         "花見で一杯" => ("feast", "宴", "花見酒", 5, "光・盃の取得で花力＋3（各手番2回まで）。配当を育てるが、負けると失う"),
         "月見で一杯" => ("night", "逆転月", "月見酒", 5, "各手番最初の空振りで倍率＋0.5、代わりに相手の花力＋2。CHAIN切れにも注意"),
         "三光" => ("storm", "修羅場", "三光", 5, "双方HP32で役撃戦。各手番の初撃＋1。役の新成立・増点も威力に。相手も攻撃できる"),
-        "雨四光" => ("snare", "伏兵", "雨四光", 7, "各手番、抽選された2種類から罠を選び場札1枚へ。徴収＝花力を最大4奪取、暴露＝手札2枚を見る、足枷＝その手番の倍率成長を停止。自分取得で解除、次の自分手番で失効"),
+        "雨四光" => ("snare", "伏兵", "雨四光", 7, "8種（徴収・暴露・足枷・奪還・すり替え・徴税・凶運・焼却）から各手番2種を抽選し、1つを場札へ。種類は所有者だけに見え、相手取得で公開発動。自分取得で解除、次の自分手番で失効。CHAIN・追加めくりは継続"),
         "四光" => ("aegis", "看破", "四光", 8, "相手の全手札を自分だけ確認。自分の手番には次の山札も見える。情報を読んで役と取得先を選ぶ。通常のあがり条件は犠牲8文を超える必要あり"),
         "五光" => ("zenith", "天啓", "五光", 10, "看破の全手札・次の山札の情報に加え、各手番の最初の取得まで同月がなければ任意の場札1枚を取れる。月越え取得の代償は相手の花力＋2。以降は通常の月合わせ"),
         "タネ" => ("hunt", "追猟", "タネ", 1, "各手番最初のタネ取得で花力＋1、相手の花力を最大1奪う（犠牲役点に応じ最大3）"),
@@ -1635,14 +1711,16 @@ impl Game {
         game.turn = 0; game.phase = Phase::Play;
         game.checkpoint = [0; 2]; game.koikoi = [0; 2];
         game.hyper_chain = [0; 2]; game.hyper_bloom = [0; 2];
-        game.hyper_hp = if kind == "storm_ko" { Some([7,32]) } else { None };
+        game.hyper_hp = if kind == "storm_ko" { Some([7,32]) }
+            else if kind == "snatch_hp" { Some([32;2]) } else { None };
         if kind == "levy" || kind == "draw_choice" { game.hyper_bloom[1] = 3; }
         if kind == "bind" { game.hyper_chain[1] = 2; }
+        if kind == "scorch" { game.hyper_boosts[1] = 4; }
         if kind == "engines" { game.hyper_bloom[1] = 5; }
         game.events.clear(); game.log.clear();
         for p in 0..2 { game.reset_hyper_turn(p); }
         if game.has_hyper_contract(0, "snare") {
-            let kind = match kind { "reveal" => TrapKind::Reveal, "bind" => TrapKind::Bind, _ => TrapKind::Levy };
+            let kind = match kind { "reveal" => TrapKind::Reveal, "bind" => TrapKind::Bind, "snatch" | "snatch_hp" => TrapKind::Snatch, "swap" => TrapKind::Swap, "tax" => TrapKind::Tax, "misfortune" => TrapKind::Misfortune, "scorch" => TrapKind::Scorch, _ => TrapKind::Levy };
             game.hyper_trap_choices[0] = vec![kind, if kind == TrapKind::Levy { TrapKind::Reveal } else { TrapKind::Levy }];
         }
         game
@@ -1686,6 +1764,8 @@ mod tests {
             hyper_trap_activations: vec![],
             hyper_revealed: [vec![], vec![]],
             hyper_growth_sealed: [false; 2],
+            hyper_payout_tax: [0; 2],
+            hyper_multiplier_penalty: [0; 2],
             hyper_trap_used: [false; 2],
             hyper_attack_used: [false; 2],
             hyper_damage: vec![],

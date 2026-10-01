@@ -87,5 +87,20 @@ test("trap results describe actual penalties rather than HP damage", async () =>
   assert.equal(trapResult(activation), "花力0を奪取");
   assert.match(trapResult({ ...activation, kind: "reveal", amount: 1 }), /手札1枚/);
   assert.match(trapResult({ ...activation, kind: "bind" }), /CHAIN継続/);
-  assert.deepEqual(Object.keys(trapEffects).sort(), ["bind", "levy", "reveal"]);
+  assert.match(trapResult({ ...activation, kind: "snatch", amount: 1 }), /罠札1枚.*奪還/);
+  assert.match(trapResult({ ...activation, kind: "swap", amount: 0 }), /手札0枚.*交換/);
+  assert.match(trapResult({ ...activation, kind: "tax", amount: 25 }), /配当25%.*切り捨て/);
+  assert.match(trapResult({ ...activation, kind: "misfortune", amount: 2 }), /倍率−0.5.*CHAIN継続/);
+  assert.match(trapResult({ ...activation, kind: "scorch", amount: 1 }), /成長倍率−0.25.*再成長/);
+  assert.deepEqual(Object.keys(trapEffects).sort(), ["bind", "levy", "misfortune", "reveal", "scorch", "snatch", "swap", "tax"]);
+});
+
+test("hidden-trap uncertainty is attached only to the selected forecast", async () => {
+  const { previewUncertain } = await import("./hyperGame");
+  const state = { ...room, hyper: { ...room.hyper!, damagePreviews: [
+    { cardId:1, targetId:5, damage:[], uncertain:true }, { cardId:1, targetId:13, damage:[], uncertain:false }
+  ] } };
+  assert.equal(previewUncertain(state,1,5),true);
+  assert.equal(previewUncertain(state,1,13),false);
+  assert.equal(previewUncertain(state,1,20),false);
 });

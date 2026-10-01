@@ -32,7 +32,7 @@ import { playSound } from "../lib/audio";
 import { MUSIC_PLAYLISTS, setMusicMode } from "../lib/music";
 import MusicNowPlaying from "./MusicNowPlaying";
 import { getYakuStatuses } from "../lib/yakuStatus";
-import { boardChanged, canCashOutWithContracts, captureTargets, canSetTrap, damageBreakdown, previewFor, takesAllTargets, trapEffects, trapResult } from "../lib/hyperGame";
+import { boardChanged, canCashOutWithContracts, captureTargets, canSetTrap, damageBreakdown, previewFor, previewUncertain, takesAllTargets, trapEffects, trapResult } from "../lib/hyperGame";
 import { fitFieldLayout } from "../lib/fieldLayout";
 import { reconcileFieldSlots, type FieldSlot } from "../lib/fieldSlots";
 import type { PublicGameEvent, RoomView, HyperDamage } from "../lib/types";
@@ -126,6 +126,8 @@ const signature = (room: RoomView) =>
     room.hyper?.trapKinds,
     room.hyper?.intel,
     room.hyper?.growthSealed,
+    room.hyper?.payoutTax,
+    room.hyper?.multiplierPenalty,
     room.hyper?.damagePreviews,
   ]);
 const sleep = (duration: number) =>
@@ -540,8 +542,9 @@ export default function GameRoom({
           )
         : targetPositions[0]?.position || center;
       const destinationFor = (id: number): Position => {
+        const recipient = event.hyper?.trapActivations?.find(hit => hit.kind === "snatch" && hit.cardId === id)?.owner ?? event.player;
         const pile = root.current?.querySelector(
-          `[data-capture-player="${event.player}"] [data-capture-kind="${cards[id].kind}"] .captured-yaku-scroll`,
+          `[data-capture-player="${recipient}"] [data-capture-kind="${cards[id].kind}"] .captured-yaku-scroll`,
         );
         const pileBounds = pile?.getBoundingClientRect();
         const visible =
@@ -552,9 +555,9 @@ export default function GameRoom({
           (visible
             ? pile
             : table.current?.querySelector(
-                `[data-player-index="${event.player}"] .player-score`,
+                `[data-player-index="${recipient}"] .player-score`,
               )) || null,
-          { ...center, y: center.y + (isOwn ? 200 : -130) },
+          { ...center, y: center.y + (recipient === own ? 200 : -130) },
         );
         return {
           ...anchor,
@@ -589,7 +592,7 @@ export default function GameRoom({
         hyper: hyperCharged,
       };
       setAnnouncement(
-        `${event.hyper?.counterDraw ? "反撃！ " : ""}${before.players[event.player]?.name || "プレイヤー"} · ${event.source === "hand" ? "手札から" : "山札から"} ${nameOf(event.cardId)}${event.requiresChoice ? " · 合わせる札を選択" : event.captured ? ` · ${event.targetIds.length + 1}枚獲得` : " · 場へ"}`,
+        `${event.hyper?.counterDraw ? "反撃！ " : ""}${before.players[event.player]?.name || "プレイヤー"} · ${event.source === "hand" ? "手札から" : "山札から"} ${nameOf(event.cardId)}${event.requiresChoice ? " · 合わせる札を選択" : event.captured ? ` · ${event.targetIds.length + 1 - (event.hyper?.trapActivations?.filter(hit => hit.kind === "snatch").reduce((sum, hit) => sum + hit.amount, 0) ?? 0)}枚獲得${event.hyper?.trapActivations?.some(hit => hit.kind === "snatch") ? " · 罠札は奪還" : ""}` : " · 場へ"}`,
       );
       if (event.source === "draw") {
         setFlight(
@@ -1299,6 +1302,7 @@ export default function GameRoom({
                             {targets.includes(id) && myTurn && !animating && !trapSelecting && (
                               <span className="field-target-label">
                                 {activeCard !== null && takesAllTargets(activeCard, targets) ? "まとめ取り" : "取る"}
+                                {activeCard !== null && previewUncertain(room, activeCard, id) && <small>罠効果未反映</small>}
                                 {activeCard !== null && previewFor(room, activeCard, id).map((hit, i) => <small key={i} title={damageBreakdown(hit)}>
                                   {hit.kind === "trap" ? "罠 " : ""}{hit.defender === own ? "自分" : "相手"} −{hit.damage} / 力{hit.power}
                                 </small>)}
@@ -1333,6 +1337,7 @@ export default function GameRoom({
                   {activeCard !== null && hyperState?.hp && !locked && <details className="combat-preview">
                     <summary>攻撃内訳</summary>
                     <div>{targets.map(target => <p key={target}><b>{nameOf(target)}</b><br />
+                      {previewUncertain(room, activeCard!, target) && <span>伏せ罠の効果は未反映。発動でダメージが変わる可能性があります。<br /></span>}
                       {previewFor(room, activeCard!, target).map((hit, i) => <span key={i}>{hit.defender === own ? "自分" : "相手"}：{damageBreakdown(hit)}<br /></span>)}
                     </p>)}</div>
                   </details>}
@@ -1883,6 +1888,8 @@ function HyperPlayerStatus({ state, index, name }: {
         <span className={`player-chain ${chain >= 3 ? "is-fever" : ""}`} key={chain}>
           <b>{contracts.length ? chain : "—"}</b> CHAIN
         </span>
+        {!!state.payoutTax?.[index] && <span className="growth-sealed">配当{state.payoutTax[index]}%徴税中</span>}
+        {!!state.multiplierPenalty?.[index] && <span className="growth-sealed">凶運 −{state.multiplierPenalty[index] / 4}</span>}
         {state.growthSealed?.[index] && <span className="growth-sealed">倍率成長封印</span>}
         <span className="player-hyper-bank">賭け <b>{state.stake[index]}</b> · 花力 <b>{state.bloom[index]}</b></span>
         <details className="player-contract-details">
@@ -1894,7 +1901,7 @@ function HyperPlayerStatus({ state, index, name }: {
             {contracts.length > 0 && <p>あがりには倍率前の役点合計が{Math.max(...contracts.map(c => c.points))}文を超え、最後の契約後にこいこいが必要（{state.cashoutKoiReady?.[index] ? "済" : "未"}）。複数契約時は最大値を採用。K.O.には適用しません。</p>}
             <p>倍率は契約・連鎖・こいこい・能力で上昇（最大×8）。賭け金と花力は勝った時だけ得点になります。</p>
             {contracts.map(c => <p key={c.id}><b>{c.name}</b>（{c.source}・犠牲{c.points}文） · {c.description}</p>)}
-            {state.hp && <p>修羅場：札枚数＋新成立・増点した役の文（最大10）＋3CHAINから1＋修羅場契約者の各手番初撃1。合計16まで。倍率・賭け金は攻撃力に含めません。罠は花力・情報・倍率成長に作用します。双方HP0は相打ち・配当なし。役あがりも可能。</p>}
+            {state.hp && <p>修羅場：札枚数＋新成立・増点した役の文（最大10）＋3CHAINから1＋修羅場契約者の各手番初撃1。合計16まで。倍率・賭け金は攻撃力に含めません。罠は取り札・手札・花力・配当・倍率に作用します。伏せ罠の効果は攻撃予告に含めません。双方HP0は相打ち・配当なし。役あがりも可能。</p>}
           </div>
         </details>
       </div>

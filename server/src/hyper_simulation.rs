@@ -187,6 +187,7 @@ fn hyper_light_contract_simulation() {
         let mut full_hp_turn_kos = 0;
         let mut ko_captures = Vec::new();
         let mut traps_fired = 0;
+        let mut trap_kinds = std::collections::BTreeMap::new();
         let mut cross_month_captures = 0;
         let mut hp_starts = 0;
         let mut payouts: [Vec<u32>; 2] = [vec![], vec![]];
@@ -223,6 +224,11 @@ fn hyper_light_contract_simulation() {
                     hp_starts += usize::from(hp.is_none() && game.hyper_hp.is_some());
                     for event in game.events.iter().filter(|e| e.id > seq) {
                         traps_fired += event.hyper.as_ref().map_or(0, |h| h.trap_activations.len());
+                        if let Some(beat) = &event.hyper {
+                            for activation in &beat.trap_activations {
+                                *trap_kinds.entry(activation.kind.name()).or_insert(0usize) += 1;
+                            }
+                        }
                         cross_month_captures += usize::from(event.target_ids.iter().any(|&c| month(c) != month(event.card_id)));
                     }
                     full_hp_turn_kos += usize::from(turn_start_hp.is_some_and(|h| h[1 - actor] == duel_hp()) && hp.is_some_and(|h| h[1 - actor] > 0) && game.hyper_hp.is_some_and(|h| h[1 - actor] == 0));
@@ -257,7 +263,7 @@ fn hyper_light_contract_simulation() {
         for values in &mut payouts { values.sort_unstable(); }
         let payout_medians = payouts.each_ref().map(|v| v.get(v.len()/2).copied());
         let n = captures.len();
-        println!("HYPER_LIGHT {}", json!({"role":role,"seeds":seeds,"mirrored":true,"hp":duel_hp(),"isolated":isolated,"winningPayoutMedians":payout_medians,"rounds":n,"contractorWinsDefenderWinsDraws":wins,"knockouts":knockouts,"laterHpStarts":hp_starts,"trapsFired":traps_fired,"crossMonthCaptures":cross_month_captures,"capturesMedian":captures[n/2],"capturesP95":captures[n*95/100],"capturesMax":captures[n-1],"actionsMedian":actions[n/2],"actionsMax":actions[n-1],"hpLossPerAction":damage,"turnsMedian":combat_turns[n/2],"defenderTurnsMedian":defender_turns[n/2],"fullHpTurnKos":full_hp_turn_kos,"koCapturesMedian":ko_captures.get(ko_captures.len()/2)}));
+        println!("HYPER_LIGHT {}", json!({"role":role,"seeds":seeds,"mirrored":true,"hp":duel_hp(),"isolated":isolated,"winningPayoutMedians":payout_medians,"rounds":n,"contractorWinsDefenderWinsDraws":wins,"knockouts":knockouts,"laterHpStarts":hp_starts,"trapsFired":traps_fired,"trapKindCounts":trap_kinds,"crossMonthCaptures":cross_month_captures,"capturesMedian":captures[n/2],"capturesP95":captures[n*95/100],"capturesMax":captures[n-1],"actionsMedian":actions[n/2],"actionsMax":actions[n-1],"hpLossPerAction":damage,"turnsMedian":combat_turns[n/2],"defenderTurnsMedian":defender_turns[n/2],"fullHpTurnKos":full_hp_turn_kos,"koCapturesMedian":ko_captures.get(ko_captures.len()/2)}));
     }
 }
 

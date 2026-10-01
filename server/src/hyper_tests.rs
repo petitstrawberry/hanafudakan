@@ -591,6 +591,7 @@ fn only_storm_enters_duel_and_other_light_contracts_preserve_existing_hp() {
 
 #[test]
 fn trap_lottery_is_stable_private_and_rejects_unoffered_choices_atomically() {
+    let mut offered = vec![];
     for seed in 0..100 {
         let mut g = Game::with_rng(1, true, StdRng::seed_from_u64(seed));
         contract(&mut g, 0, "雨四光");
@@ -598,11 +599,12 @@ fn trap_lottery_is_stable_private_and_rejects_unoffered_choices_atomically() {
         g.reset_hyper_turn(0);
         let state = g.hyper_state(Some(0)).unwrap();
         assert_eq!(state.trap_choices.len(), 2);
+        for kind in &state.trap_choices { if !offered.contains(kind) { offered.push(*kind); } }
         assert_ne!(state.trap_choices[0], state.trap_choices[1]);
         assert_eq!(state.trap_choices, g.hyper_state(Some(0)).unwrap().trap_choices);
         assert!(g.hyper_state(Some(1)).unwrap().trap_choices.is_empty());
         assert!(g.hyper_state(None).unwrap().trap_choices.is_empty());
-        let unoffered = [TrapKind::Levy, TrapKind::Reveal, TrapKind::Bind].into_iter().find(|k| !state.trap_choices.contains(k)).unwrap();
+        let unoffered = TrapKind::ALL.into_iter().find(|k| !state.trap_choices.contains(k)).unwrap();
         let before = format!("{g:?}");
         assert!(g.set_trap(0, g.field[0], g.board_revision, unoffered).is_err());
         assert_eq!(format!("{g:?}"), before);
@@ -611,6 +613,7 @@ fn trap_lottery_is_stable_private_and_rejects_unoffered_choices_atomically() {
         assert_eq!(g.hyper_state(Some(1)).unwrap().trap_kinds, [None;2]);
         assert_eq!(g.hyper_state(None).unwrap().trap_kinds, [None;2]);
     }
+    assert_eq!(offered.len(), TrapKind::ALL.len());
 }
 
 #[test]
@@ -631,7 +634,7 @@ fn three_traps_work_without_hp_and_reveal_no_private_cards_in_public_events() {
         assert!(g.hyper_hp.is_none());
         let beat = g.events[0].hyper.as_ref().unwrap();
         assert_eq!(beat.trap_activations, vec![TrapActivation { owner:0, victim:1, card_id:1, kind,
-            amount: match kind { TrapKind::Levy => 3, TrapKind::Reveal => 2, TrapKind::Bind => 0 } }]);
+            amount: match kind { TrapKind::Levy => 3, TrapKind::Reveal => 2, TrapKind::Bind => 0, _ => unreachable!() } }]);
         assert_eq!(g.hyper_chain[1], 1);
         assert!(g.hyper_state(None).unwrap().intel.opponent_hand.is_empty());
         assert!(g.hyper_state(Some(1)).unwrap().intel.opponent_hand.is_empty());
@@ -661,6 +664,7 @@ fn three_traps_work_without_hp_and_reveal_no_private_cards_in_public_events() {
                 g.add_hyper_boost(1, 1);
                 assert_eq!(g.hyper_boosts[1], 1);
             }
+            _ => unreachable!(),
         }
         assert!(g.hyper_traps.iter().all(Option::is_none));
     }
@@ -734,4 +738,143 @@ fn redeal_and_forfeit_clear_old_traps_reveals_and_growth_penalties() {
     assert!(view.intel.opponent_hand.is_empty());
     assert!(view.intel.next_card.is_none());
     assert_eq!(view.growth_sealed,[false;2]);
+}
+
+fn assert_full_deck(game: &Game) {
+    let mut cards: Vec<_> = game.hands.iter().flatten().chain(game.captured.iter().flatten())
+        .chain(&game.field).chain(&game.deck).chain(game.drawn_card.iter()).copied().collect();
+    cards.sort_unstable();
+    assert_eq!(cards, (0..48).collect::<Vec<_>>());
+}
+
+#[test]
+fn snatch_transfers_ownership_before_role_rewards_and_damage_without_breaking_chain() {
+    let mut g = Game::browser_fixture("snatch");
+    contract(&mut g, 1, "青短");
+    g.hyper_hp = Some([32;2]);
+    g.set_trap(0,9,g.board_revision,TrapKind::Snatch).unwrap();
+    g.turn = 1; g.hands[1].retain(|id| *id != 8);
+    g.capture_or_place(1,8,&[9],None);
+    assert_full_deck(&g);
+    assert_eq!(g.captured, [vec![9],vec![1,5,8]]);
+    assert_eq!(g.hyper_chain[1],1);
+    assert_eq!(g.hyper_damage[0].cards,1);
+    assert_eq!(g.hyper_damage[0].roles,0);
+    assert!(g.hyper_damage[0].role_gains.is_empty());
+    assert!(g.hyper_pending_draws[1] > 0); // Starter acquisition still works.
+    assert!(g.yaku()[1].is_empty());
+
+    // A monthly triple retains the played card and the other two field cards.
+    let mut triple = blank(); contract(&mut triple,0,"雨四光");
+    triple.captured[1] = vec![1,5]; triple.field = vec![9,10,11];
+    triple.hyper_trap_choices[0] = vec![TrapKind::Snatch];
+    triple.set_trap(0,9,triple.board_revision,TrapKind::Snatch).unwrap();
+    triple.turn=1; triple.capture_or_place(1,8,&[9,10,11],None);
+    assert_eq!(triple.captured,[vec![9],vec![1,5,8,10,11]]);
+    // The owner taking their own mark disarms it without confiscation.
+    let mut own = blank(); contract(&mut own,0,"雨四光"); own.field=vec![9];
+    own.hyper_trap_choices[0]=vec![TrapKind::Snatch];
+    own.set_trap(0,9,own.board_revision,TrapKind::Snatch).unwrap();
+    own.capture_or_place(0,8,&[9],None);
+    assert_eq!(own.captured[0],vec![8,9]); assert!(own.hyper_trap_activations.is_empty());
+}
+
+#[test]
+fn swap_preserves_all_cards_and_top_draw_order_and_keeps_replacement_private() {
+    for seed in 0..100 {
+        let mut g = Game::browser_fixture("swap"); g.rng=StdRng::seed_from_u64(seed);
+        let top = g.deck.last().copied(); let bottom=g.deck[0];
+        let hand=g.hands[1].clone(); let len=g.deck.len();
+        g.hyper_trap_kinds[0]=Some(TrapKind::Swap);
+        g.activate_trap(0,1,9);
+        assert_full_deck(&g); assert_eq!(g.deck.len(),len); assert_eq!(g.deck.last().copied(),top);
+        assert!(g.hands[1].contains(&bottom)); assert_ne!(g.hands[1],hand);
+        assert!(hand.contains(&g.deck[0]));
+        assert_eq!(g.hyper_trap_activations[0].amount,1);
+        let record=serde_json::to_value(&g.hyper_trap_activations[0]).unwrap();
+        assert_eq!(record.as_object().unwrap().len(),5);
+        assert!(g.hyper_state(None).unwrap().intel.opponent_hand.is_empty());
+        assert!(g.log.last().unwrap().contains("内容は非公開"));
+    }
+    for empty_hand in [false,true] {
+        let mut g=blank(); g.hyper_trap_kinds[0]=Some(TrapKind::Swap);
+        if empty_hand {g.deck=vec![0];} else {g.hands[1]=vec![8];}
+        g.activate_trap(0,1,9); assert_eq!(g.hyper_trap_activations[0].amount,0);
+    }
+}
+
+#[test]
+fn tax_forecast_and_settlement_agree_with_floor_rounding_and_no_double_charge() {
+    for gross in 0..100 {
+        let mut g=blank(); g.hyper_payout_tax[1]=25;
+        g.settle(Some(1),gross);
+        assert_eq!(g.scores,[gross/4,gross-gross/4]);
+        assert_eq!(g.round_points,gross-gross/4);
+        assert_eq!(g.winner,Some(1)); assert_eq!(g.hyper_payout_tax,[0;2]);
+    }
+    let mut g=Game::browser_fixture("tax");
+    g.hyper_trap_kinds[0]=Some(TrapKind::Tax); g.activate_trap(0,1,9);
+    g.captured[1]=vec![1,5,9]; g.turn=1; g.phase=Phase::Decision;
+    assert_eq!(g.hyper_gross_payout(1,0),5); assert_eq!(g.hyper_payout(1,0),4);
+    g.decision(1,false).unwrap(); assert_eq!(g.scores,[1,4]); assert_eq!(g.round_points,4);
+    let mut ko=blank(); ko.hyper_hp=Some([0,32]); ko.hyper_payout_tax[1]=25;
+    assert!(ko.finish_hyper_duel()); assert_eq!(ko.scores,[2,6]);
+    let mut draw=blank(); draw.hyper_hp=Some([0,0]); draw.hyper_payout_tax=[25;2];
+    assert!(draw.finish_hyper_duel()); assert_eq!(draw.scores,[0;2]);
+}
+
+#[test]
+fn temporary_trap_penalties_expire_on_koi_redeal_end_and_forfeit() {
+    let mut g=Game::browser_fixture("tax"); g.turn=1; g.phase=Phase::Decision;
+    g.captured[1]=vec![1,5,9];
+    g.hyper_payout_tax[1]=25; g.hyper_multiplier_penalty[1]=2;
+    g.decision(1,true).unwrap();
+    assert_eq!(g.scores,[0;2]); assert_eq!(g.hyper_payout_tax,[0;2]);
+    assert_eq!(g.hyper_multiplier_penalty,[0;2]);
+    for action in 0..3 {
+        let mut g=Game::browser_fixture("tax");
+        g.hyper_payout_tax=[25;2];g.hyper_multiplier_penalty=[2;2];
+        match action {0=>g.hyper_reset_board(),1=>g.settle(None,0),_=>g.forfeit(0).unwrap()}
+        assert_eq!(g.hyper_payout_tax,[0;2]);assert_eq!(g.hyper_multiplier_penalty,[0;2]);
+    }
+}
+
+#[test]
+fn misfortune_has_a_multiplier_floor_and_preserves_chain_and_draw_budgets() {
+    let mut g=blank();g.hyper_trap_kinds[0]=Some(TrapKind::Misfortune);
+    g.activate_trap(0,1,9); assert_eq!(g.hyper_multiplier(1),50);
+    contract(&mut g,1,"青短");g.hyper_chain[1]=2;
+    g.hyper_turn_captures[1]=1;g.deck=vec![4,8,12];
+    g.hyper_chain[1]+=1;g.queue_hyper_effects(1,&[9]);
+    assert_eq!(g.hyper_chain[1],3); assert!(g.hyper_pending_draws[1]>0);
+    assert_eq!(g.hyper_multiplier(1),175+25+50-50);
+    g.reset_hyper_turn(1);assert_eq!(g.hyper_multiplier(1),250);
+}
+
+#[test]
+fn scorch_removes_only_existing_growth_and_allows_regrowth_without_chain_loss() {
+    for boosts in 0..13 {
+        let mut g=blank();g.hyper_boosts[1]=boosts;g.hyper_chain[1]=7;
+        g.hyper_trap_kinds[0]=Some(TrapKind::Scorch);g.activate_trap(0,1,9);
+        assert_eq!(g.hyper_trap_activations[0].amount,u32::from(boosts.min(2)));
+        assert_eq!(g.hyper_boosts[1],boosts.saturating_sub(2));assert_eq!(g.hyper_chain[1],7);
+        g.reset_hyper_turn(1);assert_eq!(g.hyper_boosts[1],boosts.saturating_sub(2));
+        g.add_hyper_boost(1,1);assert_eq!(g.hyper_boosts[1],boosts.saturating_sub(2)+1);
+    }
+}
+
+#[test]
+fn hidden_trap_kinds_cannot_be_inferred_from_damage_forecasts_or_cpu_move_values() {
+    let mut baseline=None;
+    for kind in TrapKind::ALL {
+        let mut g=Game::browser_fixture("snatch");g.hyper_hp=Some([32;2]);
+        g.turn=1;g.hyper_traps[0]=Some(9);g.hyper_trap_kinds[0]=Some(kind);
+        let previews=g.damage_previews(1);let value=g.move_value(1,8,Some(9));
+        let hit=previews.iter().find(|p| p.card_id==8 && p.target_id==Some(9)).unwrap();
+        assert!(hit.uncertain);assert_eq!(hit.damage[0].roles,5);
+        if let Some((ref expected,score))=baseline {assert_eq!(&previews,expected);assert_eq!(value,score);}
+        else {baseline=Some((previews,value));}
+        g.hyper_traps[0]=None;
+        assert!(g.damage_previews(1).iter().all(|p| !p.uncertain));
+    }
 }

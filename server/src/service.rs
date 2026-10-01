@@ -1937,7 +1937,7 @@ mod tests {
         let state = AppState::default();
         let router = app(state.clone(), "client/dist");
         let mut fixtures = vec![];
-        for kind in ["levy", "reveal", "bind", "draw_choice", "sight", "revelation", "storm_ko", "engines"] {
+        for kind in ["levy", "reveal", "bind", "snatch", "snatch_hp", "swap", "tax", "misfortune", "scorch", "draw_choice", "sight", "revelation", "storm_ko", "engines"] {
             let host = session(&router, "罠の契約者").await;
             let guest = session(&router, "攻撃する人").await;
             let (_, created) = request(router.clone(), "POST", "/api/rooms", Some(&host),

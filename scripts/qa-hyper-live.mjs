@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fixtures = JSON.parse(process.env.QA_LIVE_FIXTURES);
 const base = process.env.QA_BASE_URL;
-const output = 'artifacts/light-contract-rework';
+const output = process.env.QA_OUTPUT_DIR || 'artifacts/light-contract-rework';
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, ...(process.env.QA_CHROMIUM_PATH ? { executablePath: process.env.QA_CHROMIUM_PATH } : {}) });
 const report = { evidence: 'Actual Rust HTTP/WebSocket and built App; test-only card arrangements; no mocks.', cases: [], pageErrors: [] };
@@ -119,15 +119,15 @@ try {
       await reload(attacker); assert.deepEqual(attacker.room.hyper.hp,[0,32]);
       report.cases.push({kind:fixture.kind,forecastEqualsActual:true,stopBeforeDraw:true,reconnect:true});
     } else {
-      assert.equal(owner.room.hyper.hp,null);
+      if (fixture.kind !== 'snatch_hp') assert.equal(owner.room.hyper.hp,null);
       assert.equal(owner.room.hyper.trapChoices.length,2);
       assert.deepEqual(attacker.room.hyper.trapChoices,[]);
       await owner.page.getByRole('button',{name:'罠を指定',exact:true}).click();
       await owner.page.getByRole('button',{name:'罠を取消',exact:true}).click();
       assert.deepEqual(owner.room.hyper.traps,[null,null]);
       const revision=owner.room.boardRevision;
-      const kind=fixture.kind === 'draw_choice' ? 'levy' : fixture.kind;
-      const effectName={levy:'徴収',reveal:'暴露',bind:'足枷'}[kind];
+      const kind=fixture.kind === 'draw_choice' ? 'levy' : fixture.kind === 'snatch_hp' ? 'snatch' : fixture.kind;
+      const effectName={levy:'徴収',reveal:'暴露',bind:'足枷',snatch:'奪還',swap:'すり替え',tax:'徴税',misfortune:'凶運',scorch:'焼却'}[kind];
       await owner.page.getByRole('button',{name:'罠を指定',exact:true}).click();
       await owner.page.locator('.trap-choice-panel button').filter({hasText:effectName}).click();
       await owner.page.locator('.field-slot .hana-card[data-card-id="9"]').click();
@@ -139,12 +139,21 @@ try {
       await reload(owner); assert.deepEqual(owner.room.hyper.trapKinds,[kind,null]);
       await capture(owner,fixture.kind === 'reveal' ? 24 : 16);
       await until(() => attacker.room.turn === 1,'opponent turn'); await idle(attacker);
+      if (fixture.kind === 'snatch_hp') {
+        const forecast=attacker.room.hyper.damagePreviews.find(p => p.cardId === 8 && p.targetId === 9);
+        assert.equal(forecast.uncertain,true); assert.equal(forecast.damage[0].power,7);
+      }
       if (fixture.kind === 'draw_choice') {
         await capture(attacker,4); await until(() => attacker.room.phase === 'draw_choice','draw choice'); await idle(attacker);
         assert.deepEqual(attacker.room.legalTargets,[9,10]);
       } else await attacker.page.locator('.your-hand .hana-card[data-card-id="8"]').click();
       // Single ordinary target submits on hand click outside HP mode.
-      if (fixture.kind === 'draw_choice') await attacker.page.locator('.field-slot .hana-card[data-card-id="9"]').click();
+      if (fixture.kind === 'snatch_hp') {
+        assert.match(await attacker.page.locator('.field-target-label').innerText(),/罠効果未反映/);
+        await attacker.page.getByText('攻撃内訳',{exact:true}).click();
+        assert.match(await attacker.page.locator('.combat-preview').innerText(),/発動でダメージが変わる可能性/);
+      }
+      if (fixture.kind === 'draw_choice' || fixture.kind === 'snatch_hp') await attacker.page.locator('.field-slot .hana-card[data-card-id="9"]').click();
       await until(() => attacker.room.events.some(e => e.hyper?.trapActivations?.length),'trap activation record');
       await until(async () => (await attacker.page.evaluate(() => window.__qaTraps)).length > 0,'trap animation');
       if (kind === 'levy') await attacker.page.screenshot({path:`${output}/live-trap-activation.png`});
@@ -172,6 +181,26 @@ try {
         assert.ok(attacker.room.hyper.chain[1] >= 3); assert.equal(attacker.room.hyper.boosts[1],0);
         assert.equal(attacker.room.hyper.growthSealed[1],true);
         assert.ok((await attacker.page.evaluate(() => window.__qaCelebrations)).some(t => t.startsWith('3 CHAIN')));
+      }
+      if (kind === 'snatch') {
+        assert.equal(activation.amount,1);
+        const first=attacker.room.events.find(e => e.hyper?.trapActivations?.length);
+        assert.ok(first.capturedCards[0].includes(9)); assert.ok(!first.capturedCards[1].includes(9));
+        if (fixture.kind === 'snatch_hp') {
+          assert.equal(first.hyper.damage[0].power,1); assert.equal(first.hyper.damage[0].roles,0);
+          assert.deepEqual(attacker.room.hyper.hp,[31,32]);
+          await reload(attacker); assert.deepEqual(attacker.room.hyper.hp,[31,32]);
+        }
+      }
+      if (kind === 'swap') { assert.equal(activation.amount,1); assert.deepEqual(attacker.room.hand,[0]); }
+      if (kind === 'scorch') { assert.equal(activation.amount,2); assert.equal(attacker.room.hyper.boosts[1],2); }
+      if (kind === 'misfortune') { assert.equal(activation.amount,2); assert.equal(attacker.room.hyper.multiplier[1],50); assert.equal(attacker.room.hyper.multiplierPenalty[1],2); }
+      if (kind === 'tax') {
+        assert.equal(activation.amount,25); assert.equal(attacker.room.hyper.projected[1],4);
+        await attacker.page.getByRole('button',{name:'あがる',exact:true}).click();
+        await until(() => attacker.room.phase === 'finished','taxed settlement'); await idle(attacker);
+        assert.deepEqual(attacker.room.players.map(p => p.score),[1,4]); assert.equal(attacker.room.roundPoints,4);
+        await reload(attacker); assert.deepEqual(attacker.room.players.map(p => p.score),[1,4]);
       }
       await attacker.page.screenshot({path:`${output}/live-${fixture.kind}.png`});
       report.cases.push({kind:fixture.kind,cancel:true,privateChoices:true,repeatRejected:true,reconnect:true,reconnectDuringEffect:kind === 'levy',activation});

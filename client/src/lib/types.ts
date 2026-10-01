@@ -50,8 +50,8 @@ export type HyperDamage = {
   hpBefore: number;
   hpAfter: number;
 };
-export type DamagePreview = { cardId: number; targetId: number | null; damage: HyperDamage[] };
-export type TrapKind = "levy" | "reveal" | "bind";
+export type DamagePreview = { uncertain?: boolean; cardId: number; targetId: number | null; damage: HyperDamage[] };
+export type TrapKind = "levy" | "reveal" | "bind" | "snatch" | "swap" | "tax" | "misfortune" | "scorch";
 export type TrapActivation = { owner: number; victim: number; cardId: number; kind: TrapKind; amount: number };
 export type HyperState = {
   contracts: HyperContract[][];
@@ -72,7 +72,7 @@ export type HyperState = {
   trapChoices?: TrapKind[];
   trapKinds?: (TrapKind | null)[];
   intel?: { opponentHand: number[]; nextCard: number | null };
-  growthSealed?: boolean[];
+  growthSealed?: boolean[]; payoutTax?: number[]; multiplierPenalty?: number[];
 };
 export type RoomView = {
   boardRevision?: number;
