@@ -1849,7 +1849,7 @@ mod tests {
         assert_eq!(spectator["hyper"]["options"], json!([]));
     }
     #[tokio::test]
-    async fn trap_commands_broadcast_public_marks_and_keep_private_previews_on_reconnect() {
+    async fn trap_commands_keep_placement_private_on_broadcast_and_reconnect() {
         let state = AppState::default();
         let router = app(state.clone(), "/nonexistent");
         let token = session(&router, "罠の契約者").await;
@@ -1876,7 +1876,11 @@ mod tests {
         let target = game.field[0];
         let field = game.field.clone();
         let command: Command = serde_json::from_value(json!({"type":"trap","targetId":target,"boardRevision":revision,"kind":kind})).unwrap();
+        let before_public = serde_json::to_value(room.view("spectator")).unwrap();
+        let before_other = serde_json::to_value(room.view(&room.players[1].id)).unwrap();
         apply_command(room, &session, command).unwrap();
+        assert_eq!(serde_json::to_value(room.view("spectator")).unwrap(),before_public);
+        assert_eq!(serde_json::to_value(room.view(&room.players[1].id)).unwrap(),before_other);
         room.broadcast();
         let message = rx.try_recv().unwrap();
         let view = &message["room"];
@@ -1894,7 +1898,9 @@ mod tests {
         assert_eq!(reconnect["hyper"]["traps"], view["hyper"]["traps"]);
         assert_eq!(reconnect["hyper"]["damagePreviews"], view["hyper"]["damagePreviews"]);
         let spectator = serde_json::to_value(room.view("spectator")).unwrap();
-        assert_eq!(spectator["hyper"]["traps"], json!([target, null]));
+        assert_eq!(spectator["hyper"]["traps"], json!([null, null]));
+        assert_eq!(spectator["hyper"]["trapReady"], json!([false,false]));
+        assert_eq!(spectator["hyper"]["trapRemaining"], json!([0,0]));
         assert_eq!(spectator["hyper"]["trapKinds"], json!([null, null]));
         assert_eq!(spectator["hyper"]["trapChoices"], json!([]));
         assert_eq!(spectator["hyper"]["intel"]["opponentHand"], json!([]));
@@ -1937,7 +1943,7 @@ mod tests {
         let state = AppState::default();
         let router = app(state.clone(), "client/dist");
         let mut fixtures = vec![];
-        for kind in ["levy", "reveal", "bind", "snatch", "snatch_hp", "swap", "tax", "misfortune", "scorch", "draw_choice", "sight", "revelation", "storm_ko", "engines"] {
+        for kind in ["levy", "persistent", "reveal", "bind", "snatch", "snatch_hp", "swap", "tax", "misfortune", "scorch", "draw_choice", "sight", "revelation", "storm_ko", "engines"] {
             let host = session(&router, "罠の契約者").await;
             let guest = session(&router, "攻撃する人").await;
             let (_, created) = request(router.clone(), "POST", "/api/rooms", Some(&host),

@@ -179,17 +179,17 @@ wss://your-domain.example/api/ws?token=<URLエンコードしたtoken>&room=<roo
 
 ### 公開罠・戦闘予告
 
-ハイパー状態は `traps: [cardId|null, cardId|null]`（所有者順）、`trapReady: [bool,bool]`、`damagePreviews` も含みます。HP上限は32で、HP戦を開始するのは `storm` だけ。光契約は `storm`（三光）、`snare`（雨四光）、`aegis`（四光）、`zenith`（五光）。契約の `points` は犠牲にした役の実点数で、増点済みのタネ・短冊・カスも固定1ではありません。
+ハイパー状態は `traps: [cardId|null, cardId|null]`（所有者順・本人分だけ）、`trapReady: [bool,bool]`、`trapRemaining: [0..3,0..3]`（本人分だけ）、`damagePreviews` も含みます。HP上限は32で、HP戦を開始するのは `storm` だけ。光契約は `storm`（三光）、`snare`（雨四光）、`aegis`（四光）、`zenith`（五光）。契約の `points` は犠牲にした役の実点数で、増点済みのタネ・短冊・カスも固定1ではありません。
 
 ```json
 { "type": "trap", "kind": "levy", "targetId": 9, "boardRevision": 2 }
 ```
 
-伏兵を持つ自分の `play` phase だけ、各手番1回、現在の場札を1枚指定できます。配置で手番と `boardRevision` は進みません。古い再配布revision、他人の手番、場にない札、二重配置は一括拒否し、途中状態を残しません。送信前の取消はローカル操作です。印は全員に見え、再接続のsnapshotにも残ります。種類は `levy`（花力最大4奪取）、`reveal`（残り手札ランダム2枚開示）、`bind`（当該手番の永久倍率成長停止）、`snatch`（罠札奪還）、`swap`（残り手札1枚と山札底を交換）、`tax`（同手番勝利配当25%奪取）、`misfortune`（同手番倍率−0.5）、`scorch`（永久成長倍率最大0.5削除）。サーバーが各手番に8種類から2種類を抽選し、本人の `trapChoices` へ配信します。`kind` は抽選候補の1つに限り、未指定・未知の種類・候補外を拒否します。`trapKinds: [kind|null,kind|null]` は自分の設置罠の種類だけを配信し、相手・観戦者には両方null。取消・snapshot取得・再接続で抽選し直しません。自分の次手番開始・再配布・終局で消えます。
+伏兵を持つ自分の `play` phase だけ、1局3回まで、未発動の罠がない時だけ現在の場札を1枚指定できます。配置時に回数を消費し、手番終了・再配布で補充しません。配置で手番と `boardRevision` は進みません。古い再配布revision、他人の手番、場にない札、二重配置は一括拒否し、途中状態を残しません。送信前の取消はローカル操作です。印と残回数は本人だけに配信し、相手・観戦者は `traps:[null,null]` / `trapReady:[false,false]` / `trapRemaining:[0,0]`。公開移動イベントに待機中の罠を含めず、配置の公開ログも追加しません。本人の再接続snapshotだけ印を復元します。種類は `levy`（花力最大4奪取）、`reveal`（残り手札ランダム2枚開示）、`bind`（当該手番の永久倍率成長停止）、`snatch`（罠札奪還）、`swap`（残り手札1枚と山札底を交換）、`tax`（同手番勝利配当25%奪取）、`misfortune`（同手番倍率−0.5）、`scorch`（永久成長倍率最大0.5削除）。サーバーが初回準備と罠の取得・解除後に8種類から2候補を抽選し、本人の `trapChoices` へ配信します。`kind` は抽選候補の1つに限り、未指定・未知の種類・候補外を拒否します。`trapKinds: [kind|null,kind|null]` は自分の設置罠の種類だけを配信し、相手・観戦者には両方null。取消・snapshot取得・再接続で抽選し直しません。手番をまたいで取得されるまで持続します。自分取得・再配布・終局で消え、使用回数は戻りません。再配布では未公開の候補を持ち越します。ルーレットは確定した候補の表示演出で、取消・再接続・手番経過で抽選し直しません。
 
-`damagePreviews: [{cardId, targetId, uncertain, damage: [...]}]` は手番プレイヤーにだけ配信します。`play` はその人の手札、`draw_choice` は公開済みのめくり札の選択肢に限定し、観戦者・相手には空配列です。未公開の山札は予告に使いません。相手の罠札を取得する予告は `uncertain: true` とし、罠の効果を除外して計算します。種類ごとの予告差から伏せ罠の種類を推測させません。罠がなければfalse。CPUのHP評価も同じ情報制限を使います。
+`damagePreviews: [{cardId, targetId, uncertain, damage: [...]}]` は手番プレイヤーにだけ配信します。`play` はその人の手札、`draw_choice` は公開済みのめくり札の選択肢に限定し、観戦者・相手には空配列です。未公開の山札は予告に使いません。相手が伏兵契約を持つ場合、罠の有無・場所・残回数によらずすべての取得候補を `uncertain: true` とし、罠効果を除外して計算します。対象札だけにフラグを立てて設置場所を漏らすことを避けます。取得なし・相手に伏兵契約なしならfalse。CPUのHP評価も同じ情報制限を使います。
 
-取得の公開イベント `hyper` は `traps, damage, trapActivations, growthSealed, payoutTax, multiplierPenalty` を含みます。`trapActivations: [{owner,victim,cardId,kind,amount}]` は発動した罠だけ公開し、量は徴収の実奪取量、暴露の実開示枚数、足枷は0、奪還・すり替えは実移動枚数、徴税は25（率・決着時の実徴税額ではない）、凶運は2（倍率の四半単位）、焼却は実削除boost（四半単位）です。秘密の手札IDは含めません。足枷は `growthSealed: [bool,bool]` で対象へ表示し、その手番終了で解除します。CHAIN増加・CHAIN値による倍率・追加めくりは止めません。
+取得の公開イベント `hyper` は `damage, trapActivations, growthSealed, payoutTax, multiplierPenalty`（未発動の `traps` は含めない） を含みます。`trapActivations: [{owner,victim,cardId,kind,amount}]` は発動した罠だけ公開し、量は徴収の実奪取量、暴露の実開示枚数、足枷は0、奪還・すり替えは実移動枚数、徴税は25（率・決着時の実徴税額ではない）、凶運は2（倍率の四半単位）、焼却は実削除boost（四半単位）です。秘密の手札IDは含めません。足枷は `growthSealed: [bool,bool]` で対象へ表示し、その手番終了で解除します。CHAIN増加・CHAIN値による倍率・追加めくりは止めません。
 
 HP攻撃のレコードは `attacker, defender, kind`（現在のゲームでは `capture`）、`cards, roles, roleGains`、`chain, contract, exposure, blocked, power, damage, hpBefore, hpAfter`。`contract` は修羅場の契約者の初回取得だけ1、他は0。`exposure, blocked` は旧イベント表示との互換用で現在0。役撃10・攻撃16の上限を適用し、威力を `power`、残HPで切り詰めた減少を `damage` として区別します。罠はHPダメージを発生させません。
 

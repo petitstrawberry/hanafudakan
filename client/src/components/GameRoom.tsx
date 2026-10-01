@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import Card from "./Card";
+import TrapRoulette from "./TrapRoulette";
 import CapturedYaku from "./CapturedYaku";
 import { YakuCutIn } from "./YakuCutIn";
 import Scene from "./Scene";
@@ -122,6 +123,7 @@ const signature = (room: RoomView) =>
     room.hyper?.multiplier,
     room.hyper?.traps,
     room.hyper?.trapReady,
+    room.hyper?.trapRemaining,
     room.hyper?.trapChoices,
     room.hyper?.trapKinds,
     room.hyper?.intel,
@@ -1337,15 +1339,12 @@ export default function GameRoom({
                   {activeCard !== null && hyperState?.hp && !locked && <details className="combat-preview">
                     <summary>攻撃内訳</summary>
                     <div>{targets.map(target => <p key={target}><b>{nameOf(target)}</b><br />
-                      {previewUncertain(room, activeCard!, target) && <span>伏せ罠の効果は未反映。発動でダメージが変わる可能性があります。<br /></span>}
+                      {previewUncertain(room, activeCard!, target) && <span>伏兵契約の相手への予告は罠の有無・場所を含みません。発動でダメージが変わる可能性があります。<br /></span>}
                       {previewFor(room, activeCard!, target).map((hit, i) => <span key={i}>{hit.defender === own ? "自分" : "相手"}：{damageBreakdown(hit)}<br /></span>)}
                     </p>)}</div>
                   </details>}
                   {trapSelecting && trapReady && selectedTrapKind === null && <div className="trap-choice-panel" aria-label="罠の抽選候補">
-                    <strong>抽選された罠から選択</strong>
-                    {(hyperState?.trapChoices ?? []).map(kind => <button key={kind} aria-pressed={selectedTrapKind === kind} onClick={() => setSelectedTrapKind(kind)} title={trapEffects[kind].description}>
-                      <b>{trapEffects[kind].name}</b><small>{trapEffects[kind].description}</small>
-                    </button>)}
+                    <TrapRoulette choices={hyperState?.trapChoices ?? []} remaining={hyperState?.trapRemaining?.[own] ?? 3} animated={motionEnabled()} select={setSelectedTrapKind} />
                   </div>}
                   {trapReady && canPlay && selected === null && <button aria-pressed={trapSelecting} onClick={() => { setSelected(null); setSelectedTrapKind(null); setTrapSelecting(v => !v); }}>
                     {trapSelecting ? "罠を取消" : "罠を指定"}
@@ -1874,10 +1873,11 @@ function HpAttackOverlay({ attack }: { attack: HpAttack }) {
   </div>;
 }
 
-function HyperPlayerStatus({ state, index, name }: {
+function HyperPlayerStatus({ state, index, name, viewer }: {
   state: NonNullable<RoomView["hyper"]>;
   index: number;
   name: string;
+  viewer: number | null;
 }) {
   const contracts = state.contracts[index] ?? [];
   const chain = state.chain[index] || 0;
@@ -1890,6 +1890,7 @@ function HyperPlayerStatus({ state, index, name }: {
         </span>
         {!!state.payoutTax?.[index] && <span className="growth-sealed">配当{state.payoutTax[index]}%徴税中</span>}
         {!!state.multiplierPenalty?.[index] && <span className="growth-sealed">凶運 −{state.multiplierPenalty[index] / 4}</span>}
+        {viewer === index && state.trapRemaining?.[index] !== undefined && contracts.some(c => c.id === "snare") && <span className="growth-sealed">罠 残り{state.trapRemaining[index]}回</span>}
         {state.growthSealed?.[index] && <span className="growth-sealed">倍率成長封印</span>}
         <span className="player-hyper-bank">賭け <b>{state.stake[index]}</b> · 花力 <b>{state.bloom[index]}</b></span>
         <details className="player-contract-details">
@@ -1960,7 +1961,7 @@ function PlayerBar({
         {player.score}
         <small>文</small>
       </div>
-      {hyper && <HyperPlayerStatus state={hyper} index={playerIndex} name={player.name} />}
+      {hyper && <HyperPlayerStatus state={hyper} index={playerIndex} name={player.name} viewer={self ? playerIndex : null} />}
     </div>
   );
 }

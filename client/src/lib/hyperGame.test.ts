@@ -41,7 +41,7 @@ test("cashout uses combined unmultiplied roles and requires koi after the latest
 });
 
 
-test("public traps require own play phase and the server turn budget", () => {
+test("private traps require own play phase and the server round budget", () => {
   const ready = { ...room, myIndex: 0, hyper: { ...room.hyper!, trapReady: [true, false], traps: [5, null] } };
   assert.equal(canSetTrap(ready), true);
   assert.equal(canSetTrap({ ...ready, myIndex: null }), false);

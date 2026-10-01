@@ -68,6 +68,7 @@ export type HyperState = {
   hpMax?: number;
   traps?: (number | null)[];
   trapReady?: boolean[];
+  trapRemaining?: number[];
   damagePreviews?: DamagePreview[];
   trapChoices?: TrapKind[];
   trapKinds?: (TrapKind | null)[];
