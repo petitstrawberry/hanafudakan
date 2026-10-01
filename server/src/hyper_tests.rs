@@ -378,7 +378,7 @@ fn non_storm_lights_do_not_change_combat_power_or_defense() {
 }
 
 #[test]
-fn trap_is_public_atomic_once_per_turn_and_expires_without_redeal() {
+fn trap_is_private_atomic_and_persists_across_turns_until_taken() {
     let mut game = blank();
     contract(&mut game, 0, "雨四光");
     game.hands = [vec![8, 12], vec![16, 20]];
@@ -392,7 +392,9 @@ fn trap_is_public_atomic_once_per_turn_and_expires_without_redeal() {
     game.set_trap(0, 1, game.board_revision, TrapKind::Levy).unwrap();
     assert_eq!(game.turn, turn);
     assert_eq!(game.phase, Phase::Play);
-    assert_eq!(game.hyper_state(None).unwrap().traps, [Some(1), None]);
+    assert_eq!(game.hyper_state(Some(0)).unwrap().traps, [Some(1), None]);
+    assert_eq!(game.hyper_state(None).unwrap().traps, [None;2]);
+    assert_eq!(game.hyper_state(Some(1)).unwrap().traps, [None;2]);
     assert!(!game.can_set_trap(0));
     let once = format!("{game:?}");
     assert!(game.set_trap(0, 5, game.board_revision, TrapKind::Levy).is_err());
@@ -401,8 +403,9 @@ fn trap_is_public_atomic_once_per_turn_and_expires_without_redeal() {
     assert_eq!(game.hyper_traps[0], Some(1));
     game.play(1, 16, None).unwrap();
     assert_eq!(game.turn, 0);
-    assert_eq!(game.hyper_traps[0], None);
-    assert!(game.can_set_trap(0));
+    assert_eq!(game.hyper_traps[0], Some(1));
+    assert!(!game.can_set_trap(0));
+    assert_eq!(game.hyper_state(Some(0)).unwrap().trap_remaining,[2,0]);
 }
 
 #[test]
@@ -460,7 +463,7 @@ fn own_trap_capture_disarms_without_damage_and_next_round_clears_trap_budgets() 
     assert_eq!(game.hyper_hp.unwrap()[0], 32);
     game.settle(None, 0);
     game.next_round().unwrap();
-    assert_eq!(game.hyper_trap_used, [false; 2]);
+    assert_eq!(game.hyper_trap_uses, [0; 2]);
     assert_eq!(game.hyper_attack_used, [false; 2]);
 }
 
@@ -596,6 +599,7 @@ fn trap_lottery_is_stable_private_and_rejects_unoffered_choices_atomically() {
         let mut g = Game::with_rng(1, true, StdRng::seed_from_u64(seed));
         contract(&mut g, 0, "雨四光");
         g.turn = 0; g.phase = Phase::Play;
+        g.hyper_trap_choices[0].clear();
         g.reset_hyper_turn(0);
         let state = g.hyper_state(Some(0)).unwrap();
         assert_eq!(state.trap_choices.len(), 2);
@@ -875,6 +879,77 @@ fn hidden_trap_kinds_cannot_be_inferred_from_damage_forecasts_or_cpu_move_values
         if let Some((ref expected,score))=baseline {assert_eq!(&previews,expected);assert_eq!(value,score);}
         else {baseline=Some((previews,value));}
         g.hyper_traps[0]=None;
+        assert_eq!(g.damage_previews(1),baseline.as_ref().unwrap().0);
+        g.hyper_contracts[0].clear();
         assert!(g.damage_previews(1).iter().all(|p| !p.uncertain));
     }
+}
+
+#[test]
+fn hidden_locations_readiness_and_budget_are_absent_from_other_views_logs_and_events() {
+    for target in [9,13,21] {
+        let mut g=Game::browser_fixture("snatch_hp");
+        let before_other=serde_json::to_value(g.hyper_state(Some(1))).unwrap();
+        let before_public=serde_json::to_value(g.hyper_state(None)).unwrap();
+        let log=g.log.clone();
+        g.set_trap(0,target,g.board_revision,TrapKind::Snatch).unwrap();
+        assert_eq!(serde_json::to_value(g.hyper_state(Some(1))).unwrap(),before_other);
+        assert_eq!(serde_json::to_value(g.hyper_state(None)).unwrap(),before_public);
+        assert_eq!(g.log,log);
+        assert_eq!(g.hyper_state(Some(0)).unwrap().traps,[Some(target),None]);
+        assert_eq!(g.hyper_state(Some(0)).unwrap().trap_remaining,[2,0]);
+        g.hands[0].retain(|id| *id!=16);
+        g.capture_or_place(0,16,&[],None);
+        g.push_event(0,PublicGameEventSource::Hand,16,vec![],false);
+        let event=serde_json::to_value(g.events.last().unwrap()).unwrap();
+        assert!(event["hyper"].get("traps").is_none());
+        assert!(event["hyper"]["trapActivations"].as_array().unwrap().is_empty());
+        assert_eq!(g.hyper_state(Some(0)).unwrap().traps,[Some(target),None]);
+    }
+}
+
+#[test]
+fn three_placements_per_round_do_not_refill_after_capture_turns_or_redeals() {
+    for owner in 0..2 {
+        let mut g=blank();contract(&mut g,owner,"雨四光");g.turn=owner;
+        g.hands[owner]=vec![0,4,8];g.hands[1-owner]=vec![12,16,20];g.field=vec![1,5,9,13];
+        g.deck=(0..48).filter(|c| !g.hands.iter().flatten().chain(&g.field).any(|id| id==c)).collect();
+        for (index,(card,target)) in [(0,1),(4,5),(8,9)].into_iter().enumerate() {
+            let offered=g.hyper_state(Some(owner)).unwrap().trap_choices;
+            g.set_trap(owner,target,g.board_revision,offered[0]).unwrap();
+            let remaining=(2-index) as u8;
+            assert_eq!(g.hyper_trap_uses[owner],index as u8+1);
+            assert_eq!(g.hyper_state(Some(owner)).unwrap().trap_remaining[owner],remaining);
+            let before=format!("{g:?}");
+            assert!(g.set_trap(owner,13,g.board_revision,offered[0]).is_err());
+            assert_eq!(format!("{g:?}"),before);
+            for _ in 0..5 {g.reset_hyper_turn(owner);}
+            assert_eq!(g.hyper_traps[owner],Some(target));
+            assert_eq!(g.hyper_trap_choices[owner],if remaining>0 {offered} else {vec![]});
+            g.hands[owner].retain(|id| *id!=card);
+            g.capture_or_place(owner,card,&[target],None); // Own capture disarms, with no refund.
+            assert_full_deck(&g);
+            assert!(g.hyper_trap_activations.is_empty());
+            assert_eq!(g.can_set_trap(owner),remaining>0);
+        }
+        let before=format!("{g:?}");
+        assert!(g.set_trap(owner,13,g.board_revision,TrapKind::Levy).is_err());
+        assert_eq!(format!("{g:?}"),before);
+        g.hyper_reset_board();
+        assert_eq!(g.hyper_trap_uses[owner],3);assert!(!g.can_set_trap(owner));
+        g.settle(None,0);g.next_round().unwrap();
+        assert_eq!(g.hyper_trap_uses,[0;2]);
+    }
+}
+
+#[test]
+fn new_contract_redeal_clears_pending_target_but_keeps_spent_uses_and_candidates() {
+    let mut g=Game::browser_fixture("snatch");
+    g.set_trap(0,9,g.board_revision,TrapKind::Snatch).unwrap();
+    let choices=g.hyper_trap_choices[0].clone();
+    g.hands=[vec![],vec![]];g.field.clear();g.captured=[vec![0,8,28,44],vec![]];
+    g.deck=(0..48).filter(|c| ![0,8,28,44].contains(c)).collect();
+    g.turn=0;g.phase=Phase::Decision;g.hyper(0,"四光".into()).unwrap();
+    assert_eq!(g.hyper_traps,[None;2]);assert_eq!(g.hyper_trap_uses,[1,0]);
+    assert_eq!(g.hyper_trap_choices[0],choices);assert_full_deck(&g);
 }

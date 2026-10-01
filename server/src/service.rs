@@ -117,6 +117,7 @@ struct Room {
     password: Option<String>,
     mode: Mode,
     hyper_enabled: bool,
+    practice_role: Option<String>,
     rounds: u8,
     players: Vec<Player>,
     spectators: HashSet<String>,
@@ -161,6 +162,7 @@ struct RoomSummary {
     locked: bool,
     mode: Mode,
     hyper_enabled: bool,
+    practice_role: Option<String>,
     rounds: u8,
     players: usize,
     spectators: usize,
@@ -177,6 +179,7 @@ struct RoomView {
     host_id: String,
     mode: Mode,
     hyper_enabled: bool,
+    practice_role: Option<String>,
     rounds: u8,
     round: u8,
     status: &'static str,
@@ -202,14 +205,17 @@ struct RoomView {
     spectators: usize,
 }
 impl Room {
-    fn start_game(&mut self) {
-        let mut game = if self.hyper_enabled || self.mode == Mode::Hyper {
+    fn start_game(&mut self) -> Result<(), String> {
+        let mut game = if let Some(role) = &self.practice_role {
+            Game::new_hyper_practice(role, self.event_sequence)?
+        } else if self.hyper_enabled || self.mode == Mode::Hyper {
             Game::new_hyper(self.rounds)
         } else {
             Game::new(self.rounds)
         };
         game.set_event_sequence(self.event_sequence);
         self.game = Some(game);
+        Ok(())
     }
     fn status(&self) -> &'static str {
         match self.game.as_ref().map(|g| &g.phase) {
@@ -232,6 +238,7 @@ impl Room {
             locked: self.password.is_some(),
             mode: self.mode,
             hyper_enabled: self.hyper_enabled,
+            practice_role: self.practice_role.clone(),
             rounds: self.rounds,
             players: self
                 .players
@@ -276,6 +283,7 @@ impl Room {
             host_id: self.host_id.clone(),
             mode: self.mode,
             hyper_enabled: self.hyper_enabled,
+            practice_role: self.practice_role.clone(),
             rounds: self.rounds,
             round: game.map_or(0, |g| g.round),
             status: self.status(),
@@ -571,6 +579,8 @@ struct RoomRequest {
     mode: Mode,
     #[serde(default)]
     hyper: bool,
+    #[serde(default, rename = "practiceRole")]
+    practice_role: Option<String>,
 }
 async fn hash_password(state: &AppState, password: String) -> Result<String, ApiError> {
     let permit = state
@@ -615,7 +625,11 @@ async fn create_room(
     Json(body): Json<RoomRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let name = clean_text(&body.name, 1, 40, "部屋名")?;
-    if ![3, 6, 12].contains(&body.rounds) {
+    if let Some(role) = &body.practice_role {
+        if body.mode != Mode::Cpu || body.rounds != 1 || !Game::supports_practice_role(role) {
+            return Err(ApiError::bad("契約お試しはCPU相手の1局です。正しい契約を選んでください"));
+        }
+    } else if ![3, 6, 12].contains(&body.rounds) {
         return Err(ApiError::bad("対戦局数は 3・6・12 局から選んでください"));
     }
     let session = {
@@ -665,7 +679,8 @@ async fn create_room(
         host_id: session.player_id,
         password,
         mode: body.mode,
-        hyper_enabled: body.hyper || body.mode == Mode::Hyper,
+        hyper_enabled: body.hyper || body.mode == Mode::Hyper || body.practice_role.is_some(),
+        practice_role: body.practice_role,
         rounds: body.rounds,
         players,
         spectators: HashSet::new(),
@@ -678,6 +693,7 @@ async fn create_room(
         next_cpu: Instant::now(),
     };
     room.add_message("花札館", "ようこそ。札に、想いをのせて。", true);
+    if room.practice_role.is_some() { room.start_game().map_err(|error| ApiError::bad(&error))?; }
     store.rooms.insert(id.clone(), room);
     Ok(Json(json!({"roomId":id})))
 }
@@ -823,6 +839,7 @@ enum Command {
     Start,
     Leave,
     Rematch,
+    Practice { role: String },
     NextRound,
     Play {
         #[serde(rename = "cardId")]
@@ -912,7 +929,7 @@ fn apply_command(room: &mut Room, session: &Session, command: Command) -> Result
                     {
                         return Err("対戦相手の接続をお待ちください".into());
                     }
-                    room.start_game();
+                    room.start_game()?;
                     room.add_message("花札館", "対局開始。よろしくお願いします！", true);
                 }
                 Command::Rematch => {
@@ -942,8 +959,24 @@ fn apply_command(room: &mut Room, session: &Session, command: Command) -> Result
                     {
                         return Err("再戦には両者の接続が必要です".into());
                     }
-                    room.start_game();
+                    room.start_game()?;
                     room.add_message("花札館", "新たな対局を始めます", true);
+                }
+                Command::Practice { role } => {
+                    if room.host_id != session.player_id || room.practice_role.is_none()
+                        || room.mode != Mode::Cpu {
+                        return Err("契約お試しの部屋主だけが契約を選び直せます".into());
+                    }
+                    // Construct before mutating: invalid requests preserve the
+                    // existing game, selected contract and event sequence.
+                    let mut game = Game::new_hyper_practice(&role, room.event_sequence)?;
+                    if let Some(previous) = &room.game {
+                        game.board_revision = previous.board_revision.saturating_add(1);
+                    }
+                    room.name = format!("契約お試し · {}", game.hyper_contracts[0][0].name);
+                    room.practice_role = Some(role);
+                    room.game = Some(game);
+                    room.add_message("花札館", "契約を選び直して、1局のお試しを開始しました", true);
                 }
                 Command::NextRound => {
                     if room.host_id != session.player_id {
@@ -1203,6 +1236,46 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
     }
+    #[tokio::test]
+    async fn practice_room_is_cpu_only_and_resets_atomically_without_unlocking_normal_rooms() {
+        let state=AppState::default(); let router=app(state.clone(),"/nonexistent");
+        let host=session(&router,"お試し").await;
+        for body in [json!({"name":"bad","mode":"pvp","rounds":1,"practiceRole":"三光"}),
+            json!({"name":"bad","mode":"cpu","rounds":3,"practiceRole":"三光"}),
+            json!({"name":"bad","mode":"cpu","rounds":1,"practiceRole":"unknown"}),
+            json!({"name":"bad","mode":"cpu","rounds":1})] {
+            assert_eq!(request(router.clone(),"POST","/api/rooms",Some(&host),body).await.0,StatusCode::BAD_REQUEST);
+        }
+        let (status,created)=request(router.clone(),"POST","/api/rooms",Some(&host),
+            json!({"name":"お試し","mode":"cpu","rounds":1,"practiceRole":"三光"})).await;
+        assert_eq!(status,StatusCode::OK);
+        let (_,normal)=request(router.clone(),"POST","/api/rooms",Some(&host),
+            json!({"name":"普通","mode":"cpu","rounds":3})).await;
+        let mut store=state.inner.lock().unwrap(); let session=store.sessions[&host].clone();
+        let room=store.rooms.get_mut(created["roomId"].as_str().unwrap()).unwrap();
+        let before=serde_json::to_value(room.view(&session.player_id)).unwrap();
+        assert_eq!(before["phase"],"play"); assert_eq!(before["practiceRole"],"三光");
+        assert_eq!(before["hyper"]["hp"],json!([32,32]));
+        assert!(apply_command(room,&session,Command::Practice{role:"unknown".into()}).is_err());
+        assert_eq!(serde_json::to_value(room.view(&session.player_id)).unwrap(),before);
+        let mut spectator=session.clone(); spectator.player_id="practice-observer".into();
+        room.spectators.insert(spectator.player_id.clone());
+        let spectator_before=serde_json::to_value(room.view(&session.player_id)).unwrap();
+        assert!(apply_command(room,&spectator,Command::Practice{role:"五光".into()}).is_err());
+        assert_eq!(serde_json::to_value(room.view(&session.player_id)).unwrap(),spectator_before);
+        room.event_sequence=200;
+        apply_command(room,&session,Command::Practice{role:"雨四光".into()}).unwrap();
+        let view=serde_json::to_value(room.view(&session.player_id)).unwrap();
+        assert_eq!(view["practiceRole"],"雨四光"); assert_eq!(view["hyper"]["hp"],Value::Null);
+        assert_eq!(view["hyper"]["contracts"][0][0]["id"],"snare");
+        assert!(view["boardRevision"].as_u64().unwrap()>before["boardRevision"].as_u64().unwrap());
+        assert_eq!(room.game.as_ref().unwrap().event_sequence(),200);
+        assert_eq!(view["players"][0]["score"],0); assert_eq!(view["players"][1]["score"],0);
+        let normal=store.rooms.get_mut(normal["roomId"].as_str().unwrap()).unwrap();
+        assert!(apply_command(normal,&session,Command::Practice{role:"三光".into()}).is_err());
+        assert!(normal.game.is_none()); assert!(normal.practice_role.is_none());
+    }
+
     #[tokio::test]
     async fn locked_rooms_protect_players_and_spectators_and_limit_seats() {
         let state = AppState::default();
@@ -1657,7 +1730,7 @@ mod tests {
         {
             let mut store = state.inner.lock().unwrap();
             let room = store.rooms.get_mut(id).unwrap();
-            room.start_game();
+            room.start_game().unwrap();
             assert!(room.connections.is_empty());
         }
         assert_eq!(
@@ -1726,7 +1799,7 @@ mod tests {
             .rooms
             .get_mut(created["roomId"].as_str().unwrap())
             .unwrap();
-        room.start_game();
+        room.start_game().unwrap();
         let game = room.game.as_mut().unwrap();
         game.phase = Phase::Play;
         game.hands = [vec![0, 12], vec![20, 24]];
@@ -1753,9 +1826,9 @@ mod tests {
         }
         assert!(room.view("spectator").hand.is_empty());
         let previous_id = events.last().unwrap().id;
-        room.start_game();
+        room.start_game().unwrap();
         while room.game.as_ref().unwrap().phase != Phase::Play {
-            room.start_game();
+            room.start_game().unwrap();
         }
         let game = room.game.as_mut().unwrap();
         assert!(game.events.is_empty());
@@ -1849,7 +1922,7 @@ mod tests {
         assert_eq!(spectator["hyper"]["options"], json!([]));
     }
     #[tokio::test]
-    async fn trap_commands_broadcast_public_marks_and_keep_private_previews_on_reconnect() {
+    async fn trap_commands_keep_placement_private_on_broadcast_and_reconnect() {
         let state = AppState::default();
         let router = app(state.clone(), "/nonexistent");
         let token = session(&router, "罠の契約者").await;
@@ -1876,7 +1949,11 @@ mod tests {
         let target = game.field[0];
         let field = game.field.clone();
         let command: Command = serde_json::from_value(json!({"type":"trap","targetId":target,"boardRevision":revision,"kind":kind})).unwrap();
+        let before_public = serde_json::to_value(room.view("spectator")).unwrap();
+        let before_other = serde_json::to_value(room.view(&room.players[1].id)).unwrap();
         apply_command(room, &session, command).unwrap();
+        assert_eq!(serde_json::to_value(room.view("spectator")).unwrap(),before_public);
+        assert_eq!(serde_json::to_value(room.view(&room.players[1].id)).unwrap(),before_other);
         room.broadcast();
         let message = rx.try_recv().unwrap();
         let view = &message["room"];
@@ -1894,7 +1971,9 @@ mod tests {
         assert_eq!(reconnect["hyper"]["traps"], view["hyper"]["traps"]);
         assert_eq!(reconnect["hyper"]["damagePreviews"], view["hyper"]["damagePreviews"]);
         let spectator = serde_json::to_value(room.view("spectator")).unwrap();
-        assert_eq!(spectator["hyper"]["traps"], json!([target, null]));
+        assert_eq!(spectator["hyper"]["traps"], json!([null, null]));
+        assert_eq!(spectator["hyper"]["trapReady"], json!([false,false]));
+        assert_eq!(spectator["hyper"]["trapRemaining"], json!([0,0]));
         assert_eq!(spectator["hyper"]["trapKinds"], json!([null, null]));
         assert_eq!(spectator["hyper"]["trapChoices"], json!([]));
         assert_eq!(spectator["hyper"]["intel"]["opponentHand"], json!([]));
@@ -1932,12 +2011,30 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires built client, Node and Playwright; invokes ordinary local server and CPU"]
+    async fn browser_hyper_practice_e2e() {
+        let state = AppState::default();
+        let router = app(state.clone(), "client/dist");
+        let cpu = tokio::spawn(maintenance(state));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+        let result = tokio::time::timeout(Duration::from_secs(300), tokio::process::Command::new("node")
+            .arg("scripts/qa-hyper-practice.mjs").env("QA_BASE_URL", format!("http://{address}"))
+            .kill_on_drop(true).output()).await;
+        server.abort(); cpu.abort();
+        let output = result.expect("practice browser E2E timeout").expect("Node could not launch");
+        println!("{}", String::from_utf8_lossy(&output.stdout));
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "requires built client, Node and Playwright; invokes a real local HTTP/WebSocket server"]
     async fn browser_hyper_live_e2e() {
         let state = AppState::default();
         let router = app(state.clone(), "client/dist");
         let mut fixtures = vec![];
-        for kind in ["levy", "reveal", "bind", "snatch", "snatch_hp", "swap", "tax", "misfortune", "scorch", "draw_choice", "sight", "revelation", "storm_ko", "engines"] {
+        for kind in ["levy", "persistent", "reveal", "bind", "snatch", "snatch_hp", "swap", "tax", "misfortune", "scorch", "draw_choice", "sight", "revelation", "storm_ko", "engines"] {
             let host = session(&router, "罠の契約者").await;
             let guest = session(&router, "攻撃する人").await;
             let (_, created) = request(router.clone(), "POST", "/api/rooms", Some(&host),

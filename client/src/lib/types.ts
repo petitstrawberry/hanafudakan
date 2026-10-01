@@ -5,6 +5,7 @@ export type RoomSummary = {
   locked: boolean;
   mode: Mode;
   hyperEnabled: boolean;
+  practiceRole?: string | null;
   rounds: number;
   players: number;
   spectators: number;
@@ -68,6 +69,7 @@ export type HyperState = {
   hpMax?: number;
   traps?: (number | null)[];
   trapReady?: boolean[];
+  trapRemaining?: number[];
   damagePreviews?: DamagePreview[];
   trapChoices?: TrapKind[];
   trapKinds?: (TrapKind | null)[];
@@ -82,6 +84,7 @@ export type RoomView = {
   hostId: string;
   mode: Mode;
   hyperEnabled: boolean;
+  practiceRole?: string | null;
   rounds: number;
   round: number;
   status: "waiting" | "playing" | "finished";

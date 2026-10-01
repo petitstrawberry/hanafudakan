@@ -78,3 +78,18 @@ export function previewUncertain(room: RoomView, card: number, target: number): 
   return room.hyper?.damagePreviews?.find(p => p.cardId === card && (p.targetId === target ||
     takesAllTargets(card, captureTargets(room, card))))?.uncertain === true;
 }
+
+/** Pre-click forecast for a hand card; different target choices are shown as a range. */
+export function handAttackPreview(room: RoomView, card: number) {
+  if (room.myIndex === null || room.turn !== room.myIndex || room.phase !== "play" || !room.hyper?.hp) return null;
+  const candidates = room.hyper.damagePreviews?.filter(p => p.cardId === card) ?? [];
+  const hits = candidates.flatMap(p => p.damage.filter(hit => hit.kind === "capture" && hit.attacker === room.myIndex));
+  if (!hits.length) return null;
+  const range = (values: number[]) => {
+    const low = Math.min(...values), high = Math.max(...values);
+    return low === high ? `${low}` : `${low}–${high}`;
+  };
+  const uncertain = candidates.some(p => p.uncertain);
+  return { power: range(hits.map(hit => hit.power)), damage: range(hits.map(hit => hit.damage)), uncertain,
+    description: `${uncertain ? "罠の効果は未反映。\n" : ""}${hits.map(damageBreakdown).join("\n")}` };
+}

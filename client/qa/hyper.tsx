@@ -45,13 +45,13 @@ const koReplay: RoomView = {
 };
 
 const snare: HyperContract = { id: "snare", name: "伏兵", source: "雨四光", points: 7,
-  description: "抽選2種類から選ぶ伏せ罠。相手取得で花力奪取・手札暴露・倍率成長封印" };
+  description: "1局3回の秘密の罠。取得されるまで持続、ルーレットで2候補を表示" };
 const captureHit: HyperDamage = { attacker: 0, defender: 1, kind: "capture", cards: 2, roles: 0,
   roleGains: [], chain: 0, contract: 2, exposure: 0, blocked: 0, power: 4, damage: 4, hpBefore: 32, hpAfter: 28 };
-const trapBoard: RoomView = { ...reset, turn: 0, hand: [0, 8], field: [1, 9], deckCount: 24,
+const trapBoard: RoomView = { ...reset, turn: 0, hand: [0, 8], field: [1, 2, 9], deckCount: 24,
   players: reset.players.map(p => ({ ...p, handCount: 2 })),
-  hyper: { ...reset.hyper!, contracts: [[storm, snare], []], trapChoices: ["levy", "reveal"], stake: [7, 0], hp: [32, 32], traps: [null, null], trapReady: [true, false],
-    damagePreviews: [{ cardId: 0, targetId: 1, damage: [captureHit] }, { cardId: 8, targetId: 9, damage: [captureHit] }] },
+  hyper: { ...reset.hyper!, contracts: [[storm, snare], []], trapChoices: ["levy", "reveal"], stake: [7, 0], hp: [32, 32], traps: [null, null], trapReady: [true, false], trapRemaining: [3,0],
+    damagePreviews: [{ cardId: 0, targetId: 1, uncertain: true, damage: [captureHit] }, { cardId: 0, targetId: 2, uncertain: true, damage: [{...captureHit,power:2,damage:2,hpAfter:30}] }, { cardId: 8, targetId: 9, damage: [captureHit] }] },
 };
 const mutualKo: RoomView = { ...trapBoard, phase: "round_end", turn: 1, winner: null, roundPoints: 0,
   field: [9], hyper: { ...trapBoard.hyper!, hp: [0, 0], traps: [null, null], trapReady: [false, false] },
@@ -66,6 +66,7 @@ const mutualKo: RoomView = { ...trapBoard, phase: "round_end", turn: 1, winner: 
 function Fixture() {
   const [room, setRoom] = useState(before);
   const [key, setKey] = useState(0);
+  const [sentCommand, setSentCommand] = useState<object | null>(null);
   const [autoMutualKo, setAutoMutualKo] = useState(false);
   const [autoKo, setAutoKo] = useState(false);
   useEffect(() => {
@@ -78,7 +79,7 @@ function Fixture() {
     const timer = window.setTimeout(() => { setRoom(koReplay); setAutoKo(false); }, 100);
     return () => window.clearTimeout(timer);
   }, [autoKo, key]);
-  return <div style={{ height: "100dvh", display: "flex", flexDirection: "column" }}><details style={{ flexShrink: 0, position: "relative", zIndex: 250, padding: "5px 8px", background: "#15251a", fontSize: 11 }} onClick={event => {
+  return <div data-last-command={sentCommand ? JSON.stringify(sentCommand) : undefined} style={{ height: "100dvh", display: "flex", flexDirection: "column" }}><details style={{ flexShrink: 0, position: "relative", zIndex: 250, padding: "5px 8px", background: "#15251a", fontSize: 11 }} onClick={event => {
     if ((event.target as HTMLElement).closest("button")) event.currentTarget.open = false;
   }}>
     <summary style={{ cursor: "pointer" }}>補助UI試験（合成局面）</summary>
@@ -106,15 +107,19 @@ function Fixture() {
       setAutoKo(true);
     }}>K.O.演出を再生</button>
     <button className="button secondary compact" onClick={() => { setKey(k => k + 1); setRoom(trapBoard); }}>伏兵・ダメージ予告</button>
+    {[1,3].map(count => <button key={count} className="button secondary compact" onClick={() => {
+      setSentCommand(null); setKey(k => k + 1); setRoom({ ...trapBoard, hand:[0], field: count===1 ? [1] : [1,2,3],
+        hyper:{...trapBoard.hyper!,trapReady:[false,false],damagePreviews:[{cardId:0,targetId:1,damage:[captureHit]}]} });
+    }}>{count===1 ? "修羅場・即取得" : "修羅場・まとめ取り"}</button>)}
     <button className="button secondary compact" onClick={() => { setKey(k => k + 1); setRoom({ ...trapBoard,
       log: ["1番手→2番手 攻撃：札2＋役0＋CHAIN0＋契約2＋被ダメ増0、上限16・防御0 → 威力4 / HP減少4（32→28）。"],
       hyper: { ...trapBoard.hyper!, hp: [32, 28] },
     }); }}>攻撃履歴を見る</button>
     <button className="button secondary compact" onClick={() => { setKey(k => k + 1); setRoom({ ...trapBoard,
       phase: "draw_choice", drawnCard: 0, field: [1, 2], legalTargets: [1, 2],
-      hyper: { ...trapBoard.hyper!, contracts: [[storm, snare], [snare]], traps: [null, 1], trapReady: [false, false],
-        damagePreviews: [{ cardId: 0, targetId: 1, damage: [captureHit] },
-          { cardId: 0, targetId: 2, damage: [captureHit] }] },
+      hyper: { ...trapBoard.hyper!, contracts: [[storm, snare], [snare]], traps: [null, null], trapReady: [false, false],
+        damagePreviews: [{ cardId: 0, targetId: 1, uncertain: true, damage: [captureHit] },
+          { cardId: 0, targetId: 2, uncertain: true, damage: [captureHit] }] },
     }); }}>めくり・ダメージ予告</button>
     <button className="button secondary compact" onClick={() => {
       setKey(k => k + 1); setRoom({ ...trapBoard, turn: 1, hyper: { ...trapBoard.hyper!, hp: [2, 3], traps: [1, null], trapReady: [false, false] } }); setAutoMutualKo(true);
@@ -141,8 +146,9 @@ function Fixture() {
   </div></details><div className="workspace" style={{ margin: 0, flex: 1, minHeight: 0, height: "auto" }}><main>
     <GameRoom key={key} room={room} connected busy={false}
       send={command => {
+        setSentCommand(command as object);
         const cmd = command as { type: string; targetId?: number };
-        if (cmd.type === "trap") setRoom(r => ({ ...r, hyper: { ...r.hyper!, traps: [cmd.targetId!, null], trapReady: [false, false] } }));
+        if (cmd.type === "trap") setRoom(r => ({ ...r, hyper: { ...r.hyper!, traps: [cmd.targetId!, null], trapReady: [false, false], trapRemaining: [2,0] } }));
         if ((command as { type: string }).type === "hyper") setRoom(reset);
         if ((command as { type: string }).type === "start") setRoom({ ...reset, turn: 0, hyperEnabled: false, hyper: undefined });
       }}

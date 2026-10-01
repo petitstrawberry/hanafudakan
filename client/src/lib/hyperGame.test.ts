@@ -41,7 +41,7 @@ test("cashout uses combined unmultiplied roles and requires koi after the latest
 });
 
 
-test("public traps require own play phase and the server turn budget", () => {
+test("private traps require own play phase and the server round budget", () => {
   const ready = { ...room, myIndex: 0, hyper: { ...room.hyper!, trapReady: [true, false], traps: [5, null] } };
   assert.equal(canSetTrap(ready), true);
   assert.equal(canSetTrap({ ...ready, myIndex: null }), false);
@@ -103,4 +103,21 @@ test("hidden-trap uncertainty is attached only to the selected forecast", async 
   assert.equal(previewUncertain(state,1,5),true);
   assert.equal(previewUncertain(state,1,13),false);
   assert.equal(previewUncertain(state,1,20),false);
+});
+
+test("hand attack forecasts show target ranges, overkill loss and hidden-trap uncertainty before clicking", async () => {
+  const { handAttackPreview } = await import("./hyperGame");
+  const hit = { attacker:0,defender:1,kind:"capture",cards:2,roles:5,roleGains:[{name:"赤短",points:5}],chain:0,contract:0,exposure:0,blocked:0,power:7,damage:3,hpBefore:3,hpAfter:0 };
+  const state = {...room,myIndex:0,hyper:{...room.hyper!,hp:[32,3],damagePreviews:[
+    {cardId:1,targetId:5,damage:[hit],uncertain:true},
+    {cardId:1,targetId:13,damage:[{...hit,roles:0,roleGains:[],power:2,damage:2,hpAfter:1}],uncertain:true},
+  ]}};
+  const preview=handAttackPreview(state,1)!;
+  assert.equal(preview.power,"2–7"); assert.equal(preview.damage,"2–3");
+  assert.equal(preview.uncertain,true); assert.match(preview.description,/罠の効果は未反映/);
+  assert.match(preview.description,/役5（赤短＋5文）/);
+  assert.equal(handAttackPreview(state,8),null);
+  assert.equal(handAttackPreview({...state,myIndex:null},1),null);
+  assert.equal(handAttackPreview({...state,turn:1},1),null);
+  assert.equal(handAttackPreview({...state,phase:"draw_choice"},1),null);
 });

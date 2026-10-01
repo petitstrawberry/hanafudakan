@@ -13,6 +13,7 @@ const RIBBONS: [u8; 10] = [1, 5, 9, 13, 17, 21, 25, 33, 37, 42];
 const HYPER_DRAW_LIMIT: u8 = 4;
 const DUEL_HP: u8 = 32;
 const DUEL_DAMAGE_LIMIT: u8 = 16;
+const TRAP_ROUND_LIMIT: u8 = 3;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -96,7 +97,6 @@ pub struct HyperBeat {
     pub multiplier: [u32; 2],
     pub hp: Option<[u8; 2]>,
     pub counter_draw: bool,
-    pub traps: [Option<u8>; 2],
     pub damage: Vec<HyperDamage>,
     pub trap_activations: Vec<TrapActivation>,
     pub growth_sealed: [bool; 2],
@@ -164,6 +164,7 @@ pub struct HyperState {
     pub cashout_koi_ready: [bool; 2],
     pub traps: [Option<u8>; 2],
     pub trap_ready: [bool; 2],
+    pub trap_remaining: [u8; 2],
     pub damage_previews: Vec<DamagePreview>,
     pub trap_choices: Vec<TrapKind>,
     pub trap_kinds: [Option<TrapKind>; 2],
@@ -238,7 +239,7 @@ pub struct Game {
     hyper_growth_sealed: [bool; 2],
     hyper_payout_tax: [u8; 2],
     hyper_multiplier_penalty: [u8; 2],
-    hyper_trap_used: [bool; 2],
+    hyper_trap_uses: [u8; 2],
     hyper_attack_used: [bool; 2],
     hyper_damage: Vec<HyperDamage>,
     hyper_boosts: [u8; 2],
@@ -302,7 +303,7 @@ impl Game {
             hyper_growth_sealed: [false; 2],
             hyper_payout_tax: [0; 2],
             hyper_multiplier_penalty: [0; 2],
-            hyper_trap_used: [false; 2],
+            hyper_trap_uses: [0; 2],
             hyper_attack_used: [false; 2],
             hyper_damage: vec![],
             hyper_boosts: [0; 2],
@@ -331,6 +332,39 @@ impl Game {
 
     pub fn new_hyper(rounds: u8) -> Self {
         Self::with_rng(rounds, true, StdRng::from_entropy())
+    }
+
+    pub fn supports_practice_role(role: &str) -> bool {
+        hyper_contract_for_role(role).is_some()
+    }
+
+    /// A one-round CPU sandbox: fund a real source role, then use the ordinary
+    /// contract transaction. The source cards return to the 48-card redeal.
+    pub fn new_hyper_practice(role: &str, sequence: u64) -> Result<Self, String> {
+        let source: &[u8] = match role {
+            "猪鹿蝶" => &[20, 24, 36], "赤短" => &[1, 5, 9], "青短" => &[21, 33, 37],
+            "花見で一杯" => &[8, 32], "月見で一杯" => &[28, 32],
+            "三光" => &[0, 8, 28], "雨四光" => &[0, 8, 28, 40],
+            "四光" => &[0, 8, 28, 44], "五光" => &[0, 8, 28, 40, 44],
+            "タネ" => &[4, 12, 16, 20, 24], "短冊" => &[1, 5, 13, 17, 25],
+            "カス" => &[2, 3, 6, 7, 10, 11, 14, 15, 18, 19],
+            _ => return Err("お試しできる契約を選んでください。".into()),
+        };
+        let mut game = Self::new_hyper(1);
+        game.set_event_sequence(sequence);
+        game.scores = [0; 2];
+        game.winner = None;
+        game.round_points = 0;
+        game.log.clear();
+        game.hands = [vec![], vec![]];
+        game.field.clear();
+        game.deck = (0..48).filter(|card| !source.contains(card)).collect();
+        game.captured = [source.to_vec(), vec![]];
+        game.phase = Phase::Decision;
+        game.turn = 0;
+        game.hyper(0, role.into())?;
+        game.push_log("契約お試し：役と賭け金を用意して開始。CPUが先手。通常の効果・リスクで1局を遊べます。".into());
+        Ok(game)
     }
 
     /// Seed a new match from the room's last event ID. Never rewind an active
@@ -628,8 +662,10 @@ impl Game {
             hp_max: duel_hp(),
             boosts: self.hyper_boosts,
             cashout_koi_ready: [self.cashout_koi_ready(0), self.cashout_koi_ready(1)],
-            traps: self.hyper_traps,
-            trap_ready: [self.can_set_trap(0), self.can_set_trap(1)],
+            traps: std::array::from_fn(|p| if player == Some(p) { self.hyper_traps[p] } else { None }),
+            trap_ready: std::array::from_fn(|p| player == Some(p) && self.can_set_trap(p)),
+            trap_remaining: std::array::from_fn(|p| if player == Some(p) && self.has_hyper_contract(p, "snare")
+                && !matches!(self.phase, Phase::RoundEnd | Phase::Finished) { TRAP_ROUND_LIMIT - self.hyper_trap_uses[p] } else { 0 }),
             damage_previews: player.map(|p| self.damage_previews(p)).unwrap_or_default(),
             trap_choices: player.filter(|&p| self.can_set_trap(p)).map(|p| self.hyper_trap_choices[p].clone()).unwrap_or_default(),
             trap_kinds: std::array::from_fn(|p| if player == Some(p) && self.hyper_traps[p].is_some() { self.hyper_trap_kinds[p] } else { None }),
@@ -749,7 +785,7 @@ impl Game {
         self.hyper_sealed = [vec![], vec![]];
         self.board_revision = self.board_revision.saturating_add(1);
         self.hyper_hp = None;
-        self.hyper_trap_used = [false; 2];
+        self.hyper_trap_uses = [0; 2];
         self.hyper_trap_choices = [vec![], vec![]];
         self.hyper_attack_used = [false; 2];
         self.hyper_traps = [None; 2];
@@ -917,6 +953,8 @@ impl Game {
                     self.hyper_traps[owner] = None;
                     if owner != player { self.activate_trap(owner, player, trap); }
                     self.hyper_trap_kinds[owner] = None;
+                    self.hyper_trap_choices[owner].clear();
+                    self.refresh_trap_choices(owner);
                 }
             }
             if self.has_hyper_contract(player, "zenith") && self.hyper_turn_captures[player] == 1
@@ -1034,7 +1072,8 @@ impl Game {
 
     fn can_set_trap(&self, player: usize) -> bool {
         self.hyper && player < 2 && self.turn == player && self.phase == Phase::Play
-            && self.has_hyper_contract(player, "snare") && !self.hyper_trap_used[player]
+            && self.has_hyper_contract(player, "snare") && self.hyper_trap_uses[player] < TRAP_ROUND_LIMIT
+            && self.hyper_traps[player].is_none()
             && !self.field.is_empty()
     }
 
@@ -1108,13 +1147,14 @@ impl Game {
         self.transaction(|game| {
             game.require_turn(player, Phase::Play)?;
             if revision != game.board_revision { return Err("盤面が更新されています。罠を選び直してください。".into()); }
-            if !game.can_set_trap(player) { return Err("罠は雨四光の契約者が各手番1回だけ指定できます。".into()); }
+            if !game.can_set_trap(player) { return Err("罠は1局3回まで、未発動の罠がない時だけ指定できます。".into()); }
             if !game.field.contains(&target) { return Err("罠は場札を指定してください。".into()); }
             if !game.hyper_trap_choices[player].contains(&kind) { return Err("抽選された罠から選んでください。".into()); }
             game.hyper_traps[player] = Some(target);
             game.hyper_trap_kinds[player] = Some(kind);
-            game.hyper_trap_used[player] = true;
-            game.push_log(format!("{}番手、{}月の場札#{}に伏せ罠。効果は発動時に公開。", player + 1, month(target) + 1, target));
+            game.hyper_trap_uses[player] += 1;
+            // Placement is private. No public log, mark, or readiness change
+            // may disclose the target or whether a trap is waiting.
             Ok(())
         })
     }
@@ -1134,9 +1174,9 @@ impl Game {
             for target in targets {
                 // Only the visible acquisition is simulated, never the next stock card.
                 let mut preview = self.clone();
-                let taken = if Self::takes_three(card, &matches) { matches.clone() }
-                    else { target.into_iter().collect() };
-                let uncertain = self.hyper_traps[1 - player].is_some_and(|id| taken.contains(&id));
+                // Flag every acquisition against a trap contract, including
+                // an empty mark: selectively flagging targets reveals its location.
+                let uncertain = !matches.is_empty() && self.has_hyper_contract(1 - player, "snare");
                 // The hidden kind must not be discoverable by comparing forecasts.
                 preview.hyper_traps[1 - player] = None;
                 preview.capture_or_place(player, card, &matches, target);
@@ -1302,18 +1342,25 @@ impl Game {
         self.checkpoint[opponent] = total(&evaluate(&self.active_captured(opponent)));
     }
 
+    fn refresh_trap_choices(&mut self, player: usize) {
+        if !self.has_hyper_contract(player, "snare") || self.hyper_trap_uses[player] >= TRAP_ROUND_LIMIT {
+            self.hyper_trap_choices[player].clear();
+        } else if self.hyper_trap_choices[player].is_empty() {
+            let mut choices = TrapKind::ALL.to_vec();
+            choices.shuffle(&mut self.rng);
+            choices.truncate(2);
+            self.hyper_trap_choices[player] = choices;
+        }
+    }
+
     fn reset_hyper_turn(&mut self, player: usize) {
         self.hyper_turn_captures[player] = 0;
         self.hyper_attack_used[player] = false;
-        self.hyper_trap_used[player] = false;
         self.hyper_growth_sealed[player] = false;
         self.hyper_payout_tax[player] = 0;
         self.hyper_multiplier_penalty[player] = 0;
         self.hyper_revealed[player].clear();
-        let mut choices = TrapKind::ALL.to_vec();
-        if self.has_hyper_contract(player, "snare") { choices.shuffle(&mut self.rng); choices.truncate(2); }
-        else { choices.clear(); }
-        self.hyper_trap_choices[player] = choices;
+        self.refresh_trap_choices(player);
         self.hyper_miss_used[player] = false;
         self.hyper_pending_draws[player] = 0;
         self.hyper_draws_used[player] = 0;
@@ -1358,12 +1405,8 @@ impl Game {
             self.settle(None, 0);
         } else {
             self.turn = 1 - self.turn;
-            self.hyper_traps[self.turn] = None;
-            self.hyper_trap_kinds[self.turn] = None;
             if self.hands[self.turn].is_empty() {
                 self.turn = 1 - self.turn;
-                self.hyper_traps[self.turn] = None;
-                self.hyper_trap_kinds[self.turn] = None;
             }
             self.phase = Phase::Play;
         }
@@ -1474,7 +1517,6 @@ impl Game {
                 bloom: self.hyper_bloom,
                 multiplier: [self.hyper_multiplier(0), self.hyper_multiplier(1)],
                 hp: self.hyper_hp,
-                traps: self.hyper_traps,
                 damage,
                 trap_activations,
                 growth_sealed: self.hyper_growth_sealed,
@@ -1499,7 +1541,7 @@ fn hyper_contract_for_role(role: &str) -> Option<HyperContract> {
         "花見で一杯" => ("feast", "宴", "花見酒", 5, "光・盃の取得で花力＋3（各手番2回まで）。配当を育てるが、負けると失う"),
         "月見で一杯" => ("night", "逆転月", "月見酒", 5, "各手番最初の空振りで倍率＋0.5、代わりに相手の花力＋2。CHAIN切れにも注意"),
         "三光" => ("storm", "修羅場", "三光", 5, "双方HP32で役撃戦。各手番の初撃＋1。役の新成立・増点も威力に。相手も攻撃できる"),
-        "雨四光" => ("snare", "伏兵", "雨四光", 7, "8種（徴収・暴露・足枷・奪還・すり替え・徴税・凶運・焼却）から各手番2種を抽選し、1つを場札へ。種類は所有者だけに見え、相手取得で公開発動。自分取得で解除、次の自分手番で失効。CHAIN・追加めくりは継続"),
+        "雨四光" => ("snare", "伏兵", "雨四光", 7, "1局3回まで、8種から抽選2択の罠を場札1枚へ。場所・種類・残回数は本人だけに見え、相手取得で公開発動。未発動なら手番をまたいで持続・移動不可。自分取得・再配布で解除（回数は戻らない）。CHAIN・追加めくりは継続"),
         "四光" => ("aegis", "看破", "四光", 8, "相手の全手札を自分だけ確認。自分の手番には次の山札も見える。情報を読んで役と取得先を選ぶ。通常のあがり条件は犠牲8文を超える必要あり"),
         "五光" => ("zenith", "天啓", "五光", 10, "看破の全手札・次の山札の情報に加え、各手番の最初の取得まで同月がなければ任意の場札1枚を取れる。月越え取得の代償は相手の花力＋2。以降は通常の月合わせ"),
         "タネ" => ("hunt", "追猟", "タネ", 1, "各手番最初のタネ取得で花力＋1、相手の花力を最大1奪う（犠牲役点に応じ最大3）"),
@@ -1701,6 +1743,7 @@ impl Game {
             "engines" => [vec![4,0], vec![12,16]],
             "revelation" => [vec![0,4],vec![12,20]],
             "reveal" => [vec![24,36],vec![8,12,16,20]],
+            "persistent" => [vec![16,20,24],vec![12,8,32]],
             _ => [vec![16,20], vec![8,12]],
         };
         game.field = if kind == "engines" { vec![6,9,17] } else if kind == "draw_choice" { vec![9,10,13,21] } else { vec![9,13,21] };
@@ -1713,7 +1756,7 @@ impl Game {
         game.hyper_chain = [0; 2]; game.hyper_bloom = [0; 2];
         game.hyper_hp = if kind == "storm_ko" { Some([7,32]) }
             else if kind == "snatch_hp" { Some([32;2]) } else { None };
-        if kind == "levy" || kind == "draw_choice" { game.hyper_bloom[1] = 3; }
+        if kind == "levy" || kind == "draw_choice" || kind == "persistent" { game.hyper_bloom[1] = 3; }
         if kind == "bind" { game.hyper_chain[1] = 2; }
         if kind == "scorch" { game.hyper_boosts[1] = 4; }
         if kind == "engines" { game.hyper_bloom[1] = 5; }
@@ -1766,7 +1809,7 @@ mod tests {
             hyper_growth_sealed: [false; 2],
             hyper_payout_tax: [0; 2],
             hyper_multiplier_penalty: [0; 2],
-            hyper_trap_used: [false; 2],
+            hyper_trap_uses: [0; 2],
             hyper_attack_used: [false; 2],
             hyper_damage: vec![],
             hyper_boosts: [0; 2],
@@ -1962,6 +2005,30 @@ mod tests {
         let player = game.turn;
         game.play(player, game.hands[player][0], None).unwrap();
         assert_eq!(game.events[0].id, 102);
+    }
+
+    #[test]
+    fn all_practice_contracts_use_real_transactions_and_keep_48_cards() {
+        for role in ["猪鹿蝶", "赤短", "青短", "花見で一杯", "月見で一杯", "三光", "雨四光", "四光", "五光", "タネ", "短冊", "カス"] {
+            for _ in 0..20 {
+                let mut game = Game::new_hyper_practice(role, 80).unwrap();
+                let mut expected = hyper_contract_for_role(role).unwrap();
+                describe_scaled_contract(&mut expected);
+                assert_eq!(game.hyper_contracts[0], vec![expected.clone()]);
+                assert!(game.hyper_contracts[1].is_empty());
+                assert_eq!(game.hyper_stake, [expected.points, 0]);
+                assert_eq!(game.scores, [0,0]); assert_eq!(game.rounds,1);
+                assert_eq!(game.phase,Phase::Play); assert_eq!(game.turn,1);
+                assert_eq!(game.hyper_hp, (role=="三光").then_some([32,32]));
+                assert_eq!(game.event_sequence(),80); assert!(game.events.is_empty());
+                assert!(game.captured.iter().all(Vec::is_empty));
+                let mut cards:Vec<_>=game.hands.iter().flatten().chain(&game.field).chain(&game.deck).copied().collect();
+                cards.sort_unstable(); assert_eq!(cards,(0..48).collect::<Vec<_>>());
+                for _ in 0..150 { if game.phase==Phase::Finished {break;} game.cpu_action(); }
+                assert_eq!(game.phase,Phase::Finished,"{role} practice must terminate");
+            }
+        }
+        assert!(Game::new_hyper_practice("unknown",0).is_err());
     }
 
     #[test]

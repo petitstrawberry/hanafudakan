@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import Card from "./Card";
+import TrapRoulette from "./TrapRoulette";
 import CapturedYaku from "./CapturedYaku";
 import { YakuCutIn } from "./YakuCutIn";
 import Scene from "./Scene";
@@ -28,11 +29,12 @@ import {
 } from "../lib/yakuAnnouncements";
 import { cards, cardImage } from "../lib/cards";
 import { useCardSkin } from "../lib/cardSkin";
+import { HYPER_CONTRACTS } from "../lib/hyperContracts";
 import { playSound } from "../lib/audio";
 import { MUSIC_PLAYLISTS, setMusicMode } from "../lib/music";
 import MusicNowPlaying from "./MusicNowPlaying";
 import { getYakuStatuses } from "../lib/yakuStatus";
-import { boardChanged, canCashOutWithContracts, captureTargets, canSetTrap, damageBreakdown, previewFor, previewUncertain, takesAllTargets, trapEffects, trapResult } from "../lib/hyperGame";
+import { boardChanged, canCashOutWithContracts, captureTargets, canSetTrap, damageBreakdown, previewFor, previewUncertain, handAttackPreview, takesAllTargets, trapEffects, trapResult } from "../lib/hyperGame";
 import { fitFieldLayout } from "../lib/fieldLayout";
 import { reconcileFieldSlots, type FieldSlot } from "../lib/fieldSlots";
 import type { PublicGameEvent, RoomView, HyperDamage } from "../lib/types";
@@ -104,6 +106,7 @@ const motionEnabled = () =>
 const signature = (room: RoomView) =>
   JSON.stringify([
     room.round,
+    room.practiceRole,
     room.boardRevision,
     room.phase,
     room.turn,
@@ -122,6 +125,7 @@ const signature = (room: RoomView) =>
     room.hyper?.multiplier,
     room.hyper?.traps,
     room.hyper?.trapReady,
+    room.hyper?.trapRemaining,
     room.hyper?.trapChoices,
     room.hyper?.trapKinds,
     room.hyper?.intel,
@@ -958,7 +962,7 @@ export default function GameRoom({
     if (!canPlay || trapSelecting) return;
     playSound("click");
     const matches = captureTargets(room, id);
-    if ((matches.length > 1 && !takesAllTargets(id, matches)) || (hyperState?.hp && matches.length > 0)) {
+    if (matches.length > 1 && !takesAllTargets(id, matches)) {
       setSelected((current) => (current === id ? null : id));
     } else {
       setSelected(null);
@@ -1109,6 +1113,7 @@ export default function GameRoom({
           </button>
         </div>
       </div>
+      {room.practiceRole && room.myIndex === 0 && <HyperPracticeControls role={room.practiceRole} disabled={!connected || busy || animating || submitting || dealing} send={send} />}
       <div className={`game-layout ${showChat ? "chat-open" : ""}`}>
         <div className="game-primary">
           <div
@@ -1337,15 +1342,12 @@ export default function GameRoom({
                   {activeCard !== null && hyperState?.hp && !locked && <details className="combat-preview">
                     <summary>攻撃内訳</summary>
                     <div>{targets.map(target => <p key={target}><b>{nameOf(target)}</b><br />
-                      {previewUncertain(room, activeCard!, target) && <span>伏せ罠の効果は未反映。発動でダメージが変わる可能性があります。<br /></span>}
+                      {previewUncertain(room, activeCard!, target) && <span>伏兵契約の相手への予告は罠の有無・場所を含みません。発動でダメージが変わる可能性があります。<br /></span>}
                       {previewFor(room, activeCard!, target).map((hit, i) => <span key={i}>{hit.defender === own ? "自分" : "相手"}：{damageBreakdown(hit)}<br /></span>)}
                     </p>)}</div>
                   </details>}
                   {trapSelecting && trapReady && selectedTrapKind === null && <div className="trap-choice-panel" aria-label="罠の抽選候補">
-                    <strong>抽選された罠から選択</strong>
-                    {(hyperState?.trapChoices ?? []).map(kind => <button key={kind} aria-pressed={selectedTrapKind === kind} onClick={() => setSelectedTrapKind(kind)} title={trapEffects[kind].description}>
-                      <b>{trapEffects[kind].name}</b><small>{trapEffects[kind].description}</small>
-                    </button>)}
+                    <TrapRoulette choices={hyperState?.trapChoices ?? []} remaining={hyperState?.trapRemaining?.[own] ?? 3} animated={motionEnabled()} select={setSelectedTrapKind} />
                   </div>}
                   {trapReady && canPlay && selected === null && <button aria-pressed={trapSelecting} onClick={() => { setSelected(null); setSelectedTrapKind(null); setTrapSelecting(v => !v); }}>
                     {trapSelecting ? "罠を取消" : "罠を指定"}
@@ -1386,6 +1388,7 @@ export default function GameRoom({
                   ) : (
                     room.hand.map((id) => {
                       const canCapture = captureTargets(room, id).length > 0;
+                      const attack = canPlay ? handAttackPreview(room, id) : null;
                       return (
                         <div
                           className={`hand-slot ${assist && canCapture && myTurn ? "can-capture" : ""} ${selected === id ? "is-selected" : ""} ${flight?.event.source === "hand" && flight.event.cardId === id ? "card-in-flight" : ""}`}
@@ -1400,7 +1403,11 @@ export default function GameRoom({
                             selected={selected === id}
                             disabled={!canPlay}
                             onClick={() => selectCard(id)}
+                            description={attack?.description}
                           />
+                          {attack && <span className="hand-attack-preview" aria-label={`攻撃予告：威力${attack.power}・HP減少${attack.damage}${attack.uncertain ? "・罠効果未反映" : ""}`}>
+                            <b>力{attack.power}{attack.uncertain ? "?" : ""}</b><small>HP−{attack.damage}</small>
+                          </span>}
                           {assist && canCapture && myTurn && (
                             <span
                               className="hand-match-dot"
@@ -1874,10 +1881,11 @@ function HpAttackOverlay({ attack }: { attack: HpAttack }) {
   </div>;
 }
 
-function HyperPlayerStatus({ state, index, name }: {
+function HyperPlayerStatus({ state, index, name, viewer }: {
   state: NonNullable<RoomView["hyper"]>;
   index: number;
   name: string;
+  viewer: number | null;
 }) {
   const contracts = state.contracts[index] ?? [];
   const chain = state.chain[index] || 0;
@@ -1890,6 +1898,7 @@ function HyperPlayerStatus({ state, index, name }: {
         </span>
         {!!state.payoutTax?.[index] && <span className="growth-sealed">配当{state.payoutTax[index]}%徴税中</span>}
         {!!state.multiplierPenalty?.[index] && <span className="growth-sealed">凶運 −{state.multiplierPenalty[index] / 4}</span>}
+        {viewer === index && state.trapRemaining?.[index] !== undefined && contracts.some(c => c.id === "snare") && <span className="growth-sealed">罠 残り{state.trapRemaining[index]}回</span>}
         {state.growthSealed?.[index] && <span className="growth-sealed">倍率成長封印</span>}
         <span className="player-hyper-bank">賭け <b>{state.stake[index]}</b> · 花力 <b>{state.bloom[index]}</b></span>
         <details className="player-contract-details">
@@ -1960,7 +1969,22 @@ function PlayerBar({
         {player.score}
         <small>文</small>
       </div>
-      {hyper && <HyperPlayerStatus state={hyper} index={playerIndex} name={player.name} />}
+      {hyper && <HyperPlayerStatus state={hyper} index={playerIndex} name={player.name} viewer={self ? playerIndex : null} />}
     </div>
   );
+}
+
+function HyperPracticeControls({ role, disabled, send }: { role: string; disabled: boolean; send: (command: object) => void }) {
+  const [selected, setSelected] = useState(role);
+  const panel = useRef<HTMLDetailsElement>(null);
+  useEffect(() => setSelected(role), [role]);
+  const contract = HYPER_CONTRACTS.find(candidate => candidate.source === selected);
+  return <details ref={panel} className="hyper-practice-controls">
+    <summary>契約お試し · {HYPER_CONTRACTS.find(candidate => candidate.source === role)?.name} · 選び直す</summary>
+    <p>役と賭け金を用意したCPUとの1局。試し直すと得点・札・罠をリセットします。</p>
+    <div><label>試す契約<select aria-label="試す契約" value={selected} disabled={disabled} onChange={event => setSelected(event.target.value)}>
+      {HYPER_CONTRACTS.map(candidate => <option key={candidate.source} value={candidate.source}>{candidate.name}（{candidate.source}）</option>)}
+    </select></label><button className="button secondary compact" disabled={disabled} onClick={() => { if (panel.current) panel.current.open = false; send({type:"practice",role:selected}); }}>この契約で試し直す</button></div>
+    <p>{contract?.effect}</p>
+  </details>;
 }
