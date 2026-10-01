@@ -265,7 +265,7 @@
   .workspace:has(.enhanced-game) {
     height: 100dvh;
     overflow: hidden;
-    padding-bottom: 0;
+    padding-bottom: 65px; /* Reserve the fixed mobile menu so own HP stays visible. */
   }
   .workspace:has(.enhanced-game) > main {
     padding-inline: 10px;

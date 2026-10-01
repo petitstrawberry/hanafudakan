@@ -34,6 +34,23 @@ export type HyperOption = {
   contract: HyperContract;
   points: number;
 };
+export type HyperDamage = {
+  attacker: number;
+  defender: number;
+  kind: string;
+  cards: number;
+  roles: number;
+  roleGains: Yaku[];
+  chain: number;
+  contract: number;
+  exposure: number;
+  blocked: number;
+  power: number;
+  damage: number;
+  hpBefore: number;
+  hpAfter: number;
+};
+export type DamagePreview = { cardId: number; targetId: number | null; damage: HyperDamage[] };
 export type HyperState = {
   contracts: HyperContract[][];
   stake: number[];
@@ -47,6 +64,9 @@ export type HyperState = {
   cashoutKoiReady?: boolean[];
   hp?: number[] | null;
   hpMax?: number;
+  traps?: (number | null)[];
+  trapReady?: boolean[];
+  damagePreviews?: DamagePreview[];
 };
 export type RoomView = {
   boardRevision?: number;
@@ -97,5 +117,5 @@ export type PublicGameEvent = {
   capturedCards: number[][];
   deckCount: number;
   requiresChoice: boolean;
-  hyper?: (Pick<HyperState, "chain" | "bloom" | "multiplier" | "hp"> & { counterDraw?: boolean }) | null;
+  hyper?: (Pick<HyperState, "chain" | "bloom" | "multiplier" | "hp"> & { counterDraw?: boolean; traps?: (number | null)[]; damage?: HyperDamage[] }) | null;
 };

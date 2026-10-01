@@ -1656,3 +1656,15 @@ html[data-motion="false"] .player-chain.is-fever { animation: none; }
 @media (prefers-reduced-motion: reduce) {
   .opening-deal-card { animation: none; }
 }
+
+/* Public traps and authoritative combat forecasts share the existing field. */
+.field-trapped .hana-card { outline: 2px solid #ae9ff3; outline-offset: 2px; }
+.trap-target .hana-card { cursor: crosshair; box-shadow: 0 0 12px #a589ea; }
+.field-trap-label { position: absolute; top: -5px; left: 50%; transform: translateX(-50%); z-index: 4; color: #fff; background: #543679; border-radius: 5px; padding: 2px 4px; font-size: 8px; white-space: nowrap; pointer-events: none; }
+.field-target-label small { display: block; font-size: 8px; white-space: nowrap; }
+
+.combat-preview { flex: 0 0 auto; font-size: 10px; }
+.combat-preview summary { cursor: pointer; }
+.combat-preview > div { position: absolute; z-index: 35; bottom: calc(100% + 5px); left: 50%; transform: translateX(-50%); width: min(340px, 88vw); max-height: 160px; overflow: auto; white-space: normal; text-align: left; padding: 8px 12px; border: 1px solid #d2b371; border-radius: 8px; background: #202c25; color: #fff1d1; font-size: 11px; }
+.combat-preview p { margin: 4px 0; }
+.enhanced-game .turn-banner:has(button[aria-pressed]) { padding-right: 85px; padding-left: 8px; }

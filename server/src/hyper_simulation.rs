@@ -6,6 +6,7 @@ use serde_json::json;
 #[ignore = "2000 seeded CPU rounds; run explicitly for balance reports"]
 fn hyper_balance_simulation() {
     let count = std::env::var("HYPER_SIM_SEEDS").ok().and_then(|n| n.parse().ok()).unwrap_or(2000);
+    assert!(count > 0, "HYPER_SIM_SEEDS must be positive");
     let variant: u8 = std::env::var("HYPER_BALANCE_VARIANT").ok().and_then(|n| n.parse().ok()).unwrap_or(3);
     let mut draws = 0;
     let mut wins = [0; 2];
@@ -75,8 +76,8 @@ fn hyper_balance_simulation() {
         "draws": draws, "contracts": contracts, "contractedRounds": contracted_rounds,
         "multiContractRounds": multi_contract_rounds, "chain3Rounds": chain_rounds,
         "emptyResetDecks": empty_reset_decks, "contractCounts": contract_counts,
-        "actionsMedian": steps[1000], "actionsP95": steps[1900], "actionsMax": steps[1999],
-        "payoutMedian": payouts[1000], "payoutP95": payouts[1900], "payoutMax": payouts[1999],
+        "actionsMedian": steps[count as usize / 2], "actionsP95": steps[count as usize * 95 / 100], "actionsMax": steps[count as usize - 1],
+        "payoutMedian": payouts[count as usize / 2], "payoutP95": payouts[count as usize * 95 / 100], "payoutMax": payouts[count as usize - 1],
         "peakChainMax": peak_chains.iter().max(),
     }));
 }
@@ -109,6 +110,7 @@ fn hyper_strategy_simulation() {
     let variant: u8 = std::env::var("HYPER_RESET_VARIANT").unwrap_or_default().parse().unwrap_or(1);
     let balance_variant: u8 = std::env::var("HYPER_BALANCE_VARIANT").ok().and_then(|n| n.parse().ok()).unwrap_or(3);
     let seeds: u64 = std::env::var("HYPER_SIM_SEEDS").ok().and_then(|n| n.parse().ok()).unwrap_or(2000);
+    assert!(seeds > 0, "HYPER_SIM_SEEDS must be positive");
     for (left, right) in [("reckless", "cashout"), ("balanced", "cashout"), ("balanced", "reckless")] {
         let mut wins = [0; 3];
         let mut score = [0u64; 2];
@@ -162,9 +164,122 @@ fn hyper_strategy_simulation() {
             "policies": [left, right], "matches": seeds * 2, "winsAndTies": wins,
             "totalScore": score, "contractedPlayerRounds": risk[0], "lostContractedPlayerRounds": risk[1],
             "hpRounds": hp_rounds, "knockouts": knockouts, "maxActions": max_actions,
-            "seeds": "0..2000, both seats", "roundsPerMatch": 3,
+            "seeds": format!("0..{seeds}, both seats"), "roundsPerMatch": 3,
             "resetVariant": variant,
             "balanceVariant": balance_variant,
         }));
+    }
+}
+#[test]
+#[ignore = "seeded light-contract combat tempo comparison"]
+fn hyper_light_contract_simulation() {
+    let seeds: u64 = std::env::var("HYPER_SIM_SEEDS").ok().and_then(|n| n.parse().ok()).unwrap_or(2000);
+    assert!(seeds > 0, "HYPER_SIM_SEEDS must be positive");
+    for (role, cards) in [("三光", vec![0,8,28]), ("雨四光", vec![0,8,28,40]), ("四光", vec![0,8,28,44]), ("五光", vec![0,8,28,40,44])] {
+        let mut wins = [0; 3];
+        let mut knockouts = 0;
+        let mut captures = Vec::new();
+        let mut actions = Vec::new();
+        let mut damage = std::collections::BTreeMap::new();
+        let mut combat_turns = Vec::new();
+        let mut defender_turns = Vec::new();
+        let mut full_hp_turn_kos = 0;
+        let mut ko_captures = Vec::new();
+        for seed in 0..seeds {
+            for seat in 0..2 {
+                let mut game = Game::with_rng(1, true, StdRng::seed_from_u64(seed));
+                game.hands = [vec![], vec![]];
+                game.field.clear();
+                game.captured = [vec![], vec![]];
+                game.captured[seat] = cards.clone();
+                game.deck = (0..48).filter(|c| !cards.contains(c)).collect();
+                game.turn = seat;
+                game.phase = Phase::Decision;
+                game.hyper(seat, role.into()).unwrap();
+                let mut steps = 0;
+                let mut takes = 0;
+                let mut turns = 0;
+                let mut answers = 0;
+                let mut turn_start_hp = game.hyper_hp;
+                loop {
+                    let seq = game.event_sequence();
+                    let hp = game.hyper_hp;
+                    let actor = game.turn;
+                    if game.phase == Phase::Play {
+                        turn_start_hp = game.hyper_hp;
+                        turns += 1;
+                        answers += usize::from(actor != seat);
+                    }
+                    game.cpu_action();
+                    full_hp_turn_kos += usize::from(turn_start_hp.is_some_and(|h| h[1 - actor] == duel_hp()) && hp.is_some_and(|h| h[1 - actor] > 0) && game.hyper_hp.is_some_and(|h| h[1 - actor] == 0));
+                    takes += game.events.iter().filter(|e| e.id > seq && e.captured).count();
+                    if let (Some(before), Some(after)) = (hp, game.hyper_hp) {
+                        for p in 0..2 {
+                            let delta = before[p].saturating_sub(after[p]);
+                            if delta > 0 { *damage.entry(delta).or_insert(0) += 1; }
+                        }
+                    }
+                    let mut all: Vec<_> = game.hands.iter().flatten().chain(game.captured.iter().flatten()).chain(&game.field).chain(&game.deck).chain(game.drawn_card.iter()).copied().collect();
+                    all.sort_unstable();
+                    assert_eq!(all, (0..48).collect::<Vec<_>>(), "{role} seed {seed}");
+                    steps += 1;
+                    assert!(steps < 400, "{role} stalled seed {seed}");
+                    if game.phase == Phase::Finished { break; }
+                }
+                match game.winner { Some(p) if p == seat => wins[0] += 1, Some(_) => wins[1] += 1, None => wins[2] += 1 }
+                knockouts += usize::from(game.hyper_hp.is_some_and(|hp| hp.contains(&0)));
+                if game.hyper_hp.is_some_and(|h| h.contains(&0)) { ko_captures.push(takes); }
+                captures.push(takes);
+                combat_turns.push(turns);
+                defender_turns.push(answers);
+                actions.push(steps);
+            }
+        }
+        captures.sort_unstable(); actions.sort_unstable(); combat_turns.sort_unstable(); defender_turns.sort_unstable(); ko_captures.sort_unstable();
+        let n = captures.len();
+        println!("HYPER_LIGHT {}", json!({"role":role,"seeds":seeds,"mirrored":true,"hp":duel_hp(),"rounds":n,"contractorWinsDefenderWinsDraws":wins,"knockouts":knockouts,"capturesMedian":captures[n/2],"capturesP95":captures[n*95/100],"capturesMax":captures[n-1],"actionsMedian":actions[n/2],"actionsMax":actions[n-1],"hpLossPerAction":damage,"combatTurnsMedian":combat_turns[n/2],"defenderTurnsMedian":defender_turns[n/2],"fullHpTurnKos":full_hp_turn_kos,"koCapturesMedian":ko_captures.get(ko_captures.len()/2)}));
+    }
+}
+
+#[test]
+#[ignore = "seeded contract families and 1/3-point strengths; mirrors both seats"]
+fn hyper_contract_choice_simulation() {
+    let seeds: u64 = std::env::var("HYPER_SIM_SEEDS").ok().and_then(|n| n.parse().ok()).unwrap_or(500);
+    assert!(seeds > 0);
+    for (role, cards) in [
+        ("猪鹿蝶", vec![20,24,36]), ("赤短", vec![1,5,9]), ("青短", vec![21,33,37]),
+        ("花見で一杯", vec![8,32]), ("月見で一杯", vec![28,32]),
+        ("タネ", vec![4,12,16,20,24]), ("タネ", vec![4,12,16,20,24,32,36]),
+        ("短冊", vec![1,5,13,17,21]), ("短冊", vec![1,5,13,17,21,25,33]),
+        ("カス", vec![2,3,6,7,10,11,14,15,18,19]), ("カス", vec![2,3,6,7,10,11,14,15,18,19,22,23]),
+    ] {
+        let cost = evaluate(&cards).iter().find(|r| r.name == role).unwrap().points;
+        let mut wins = [0; 3];
+        let mut actions = vec![];
+        let mut extra_draws = 0;
+        let mut payout = vec![];
+        for seed in 0..seeds {
+            for seat in 0..2 {
+                let mut g = Game::with_rng(1, true, StdRng::seed_from_u64(seed));
+                g.hands = [vec![], vec![]]; g.field.clear(); g.captured = [vec![], vec![]];
+                g.captured[seat] = cards.clone(); g.deck = (0..48).filter(|c| !cards.contains(c)).collect();
+                g.turn = seat; g.phase = Phase::Decision;
+                g.hyper(seat, role.into()).unwrap();
+                let mut steps = 0;
+                while g.phase != Phase::Finished {
+                    let sequence = g.event_sequence();
+                    g.cpu_action();
+                    let draws = g.events.iter().filter(|e| e.id > sequence && e.player == seat && e.source == PublicGameEventSource::Draw).count();
+                    extra_draws += draws.saturating_sub(1);
+                    let mut all: Vec<_> = g.hands.iter().flatten().chain(g.captured.iter().flatten()).chain(&g.field).chain(&g.deck).chain(g.drawn_card.iter()).copied().collect();
+                    all.sort_unstable(); assert_eq!(all, (0..48).collect::<Vec<_>>());
+                    steps += 1; assert!(steps < 400, "{role}/{cost} seed {seed}");
+                }
+                match g.winner { Some(p) if p == seat => wins[0] += 1, Some(_) => wins[1] += 1, None => wins[2] += 1 }
+                actions.push(steps); payout.push(g.round_points);
+            }
+        }
+        actions.sort_unstable(); payout.sort_unstable(); let n = actions.len();
+        println!("HYPER_CHOICES {}", json!({"role":role,"cost":cost,"rounds":n,"winsAndDraws":wins,"actionsMedian":actions[n/2],"actionsMax":actions[n-1],"payoutMedian":payout[n/2],"extraDrawsLowerBound":extra_draws,"policy":"cpu including later contracts; not isolated effect"}));
     }
 }

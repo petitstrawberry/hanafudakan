@@ -51,7 +51,7 @@ async function clientFor(room, viewport = { width: 1440, height: 1000 }) {
     let previous = '';
     new MutationObserver(() => {
       const overlay = document.querySelector('.move-overlay');
-      const stage = overlay?.className || '';
+      const stage = overlay?.className.trim() || '';
       if (!stage || stage === previous) { previous = stage; return; }
       previous = stage;
       window.__fixtureAnimations.push({ stage, targets: overlay.querySelectorAll('.target-copy').length, played: overlay.querySelectorAll('.played-copy').length, locked: document.querySelector('.game-page')?.getAttribute('data-animating'), enabledHandButtons: document.querySelectorAll('.your-hand button:not([disabled])').length });

@@ -222,7 +222,7 @@ fn every_engine_respects_global_extra_draw_budget() {
         assert!(game.hyper_pending_draws[0] + game.hyper_draws_used[0] <= HYPER_DRAW_LIMIT);
     }
     assert_eq!(game.hyper_pending_draws[0], HYPER_DRAW_LIMIT);
-    assert_eq!(game.hyper_bloom[0], 7); // two feasts + three chaff bonuses
+    assert_eq!(game.hyper_bloom, [9, 3]); // two feasts + three chaff cards; beast gifts three
 }
 
 #[test]
@@ -283,7 +283,8 @@ fn reversal_miss_triggers_once_and_ribbon_targets_match_client_protocol() {
     game.capture_or_place(0, 0, &[], None);
     game.capture_or_place(0, 8, &[], None);
     assert_eq!(game.hyper_boosts[0], 2);
-    assert_eq!(game.hyper_pending_draws[0], 1);
+    assert_eq!(game.hyper_pending_draws[0], 0);
+    assert_eq!(game.hyper_bloom[1], 2);
     contract(&mut game, 0, "赤短");
     game.hands[0] = vec![1];
     game.field = vec![5, 13];
@@ -309,4 +310,276 @@ fn reset_and_score_state_clear_between_rounds_and_options_belong_to_turn_owner()
     assert_eq!(game.hyper_stake, [0, 0]);
     assert_eq!(game.hyper_boosts, [0, 0]);
     assert!(game.hyper_contracts.iter().all(Vec::is_empty));
+}
+
+#[test]
+fn light_contracts_are_distinct_and_actual_role_points_set_the_cost() {
+    let ids: std::collections::HashSet<_> = ["三光", "雨四光", "四光", "五光"].map(|r| hyper_contract_for_role(r).unwrap().id).into_iter().collect();
+    assert_eq!(ids.len(), 4);
+    let mut game = blank();
+    game.captured[0] = (0..48).filter(|c| (!BRIGHTS.contains(c) && !ANIMALS.contains(c) && !RIBBONS.contains(c)) || *c == 32).take(15).collect();
+    game.phase = Phase::Decision;
+    let option = game.hyper_options(0).into_iter().find(|o| o.role == "カス").unwrap();
+    assert_eq!(option.points, 6);
+    assert_eq!(option.contract.points, 6);
+    game.hyper(0, "カス".into()).unwrap();
+    assert_eq!(game.cashout_minimum(0), 6);
+    assert_eq!(game.hyper_stake[0], 6);
+}
+
+#[test]
+fn duel_uses_role_increases_once_and_light_upgrades_only_add_the_difference() {
+    let mut game = blank();
+    contract(&mut game, 0, "三光");
+    game.hyper_hp = Some([32; 2]);
+    game.captured[0] = vec![0, 8];
+    game.field = vec![29, 45];
+    game.capture_or_place(0, 28, &[29], None);
+    let first = game.hyper_damage[0].clone();
+    assert_eq!((first.cards, first.roles, first.chain, first.contract, first.power), (2, 5, 0, 1, 8));
+    assert_eq!(first.role_gains, vec![Yaku { name: "三光".into(), points: 5 }]);
+    game.capture_or_place(0, 44, &[45], None);
+    let upgraded = &game.hyper_damage[0];
+    assert_eq!((upgraded.roles, upgraded.contract, upgraded.power), (3, 0, 5));
+    assert_eq!(upgraded.role_gains[0].name, "四光");
+    game.field.push(5);
+    game.capture_or_place(0, 4, &[5], None);
+    assert_eq!(game.hyper_damage[0].roles, 0);
+}
+
+#[test]
+fn simultaneous_roles_chain_and_zenith_obey_integer_caps_and_hp_clamping() {
+    let mut game = blank();
+    contract(&mut game, 0, "五光");
+    game.hyper_hp = Some([32, 3]);
+    game.hyper_chain[0] = 2;
+    game.captured[0] = vec![0, 28, 1, 5, 33, 37];
+    game.field = vec![9];
+    game.capture_or_place(0, 8, &[9], None); // 三光 + 赤短 = 10 role damage.
+    let hit = &game.hyper_damage[0];
+    assert_eq!((hit.roles, hit.chain, hit.contract, hit.power, hit.damage), (10, 1, 5, 16, 3));
+    assert_eq!((hit.hp_before, hit.hp_after), (3, 0));
+    assert!(game.log.iter().any(|line| line.contains("威力16 / HP減少3")));
+    let before = vec![];
+    let after = vec![Yaku { name: "三光".into(), points: 5 }, Yaku { name: "赤短".into(), points: 5 }, Yaku { name: "青短".into(), points: 5 }];
+    assert_eq!(total(&role_increases(&before, &after)).min(10), 10);
+}
+
+#[test]
+fn light_guard_only_blocks_first_hit_per_turn_and_zenith_has_real_risk() {
+    let mut game = blank();
+    contract(&mut game, 1, "四光");
+    contract(&mut game, 1, "五光");
+    game.hyper_hp = Some([32; 2]);
+    game.field = vec![1, 5];
+    game.capture_or_place(0, 0, &[1], None);
+    assert_eq!((game.hyper_damage[0].exposure, game.hyper_damage[0].blocked, game.hyper_damage[0].power), (1, 2, 1));
+    game.capture_or_place(0, 4, &[5], None);
+    assert_eq!((game.hyper_damage[0].blocked, game.hyper_damage[0].power), (0, 3));
+    game.reset_hyper_turn(0);
+    game.field.push(9);
+    game.capture_or_place(0, 8, &[9], None);
+    assert_eq!(game.hyper_damage[0].blocked, 2);
+}
+
+#[test]
+fn trap_is_public_atomic_once_per_turn_and_expires_without_redeal() {
+    let mut game = blank();
+    contract(&mut game, 0, "雨四光");
+    game.hands = [vec![8, 12], vec![16, 20]];
+    game.field = vec![1, 5];
+    let before = format!("{game:?}");
+    assert!(game.set_trap(0, 1, game.board_revision + 1).is_err());
+    assert!(game.set_trap(0, 2, game.board_revision).is_err());
+    assert!(game.set_trap(1, 1, game.board_revision).is_err());
+    assert_eq!(format!("{game:?}"), before);
+    let turn = game.turn;
+    game.set_trap(0, 1, game.board_revision).unwrap();
+    assert_eq!(game.turn, turn);
+    assert_eq!(game.phase, Phase::Play);
+    assert_eq!(game.hyper_state(None).unwrap().traps, [Some(1), None]);
+    assert!(!game.can_set_trap(0));
+    let once = format!("{game:?}");
+    assert!(game.set_trap(0, 5, game.board_revision).is_err());
+    assert_eq!(format!("{game:?}"), once);
+    game.play(0, 8, None).unwrap();
+    assert_eq!(game.hyper_traps[0], Some(1));
+    game.play(1, 16, None).unwrap();
+    assert_eq!(game.turn, 0);
+    assert_eq!(game.hyper_traps[0], None);
+    assert!(game.can_set_trap(0));
+}
+
+#[test]
+fn trap_capture_can_knock_out_actor_or_both_and_stops_stock() {
+    for (hp, expected) in [([32, 3], Some(0)), ([2, 3], None)] {
+        let mut game = blank();
+        contract(&mut game, 0, "雨四光");
+        game.hyper_hp = Some(hp);
+        game.turn = 1;
+        game.hands = [vec![8], vec![0]];
+        game.field = vec![1];
+        game.deck = vec![12];
+        game.hyper_traps[0] = Some(1);
+        game.play(1, 0, None).unwrap();
+        assert_eq!(game.winner, expected);
+        assert_eq!(game.phase, Phase::RoundEnd);
+        assert_eq!(game.deck, vec![12]);
+        assert_eq!(game.hyper_pending_draws, [0, 0]);
+        assert_eq!(game.hyper_traps, [None; 2]);
+        let damage = &game.events.last().unwrap().hyper.as_ref().unwrap().damage;
+        assert_eq!(damage.len(), 2);
+        assert_eq!(damage[1].kind, "trap");
+        assert_eq!(damage[1].defender, 1);
+        if expected.is_none() { assert_eq!(game.round_points, 0); assert_eq!(game.hyper_hp, Some([0, 0])); }
+    }
+}
+
+#[test]
+fn preview_matches_capture_and_reveals_only_own_hand_or_exposed_draw_choice() {
+    let mut game = blank();
+    contract(&mut game, 0, "五光");
+    game.hyper_hp = Some([32; 2]);
+    game.captured[0] = vec![0, 8];
+    game.hands = [vec![28], vec![12]];
+    game.field = vec![29, 30];
+    game.hyper_traps[1] = Some(29);
+    let before = format!("{game:?}");
+    let previews = game.damage_previews(0);
+    assert_eq!(previews.len(), 2);
+    assert_eq!(format!("{game:?}"), before);
+    assert!(game.hyper_state(None).unwrap().damage_previews.is_empty());
+    assert!(game.damage_previews(1).is_empty());
+    game.capture_or_place(0, 28, &[29, 30], Some(29));
+    assert_eq!(previews[0].damage, game.hyper_damage);
+    game.hyper_traps[0] = Some(30);
+    game.turn = 0;
+    game.phase = Phase::DrawChoice;
+    assert!(game.set_trap(0, 30, game.board_revision).is_err());
+    game.hyper_reset_board();
+    assert_eq!(game.hyper_traps, [None; 2]);
+}
+
+#[test]
+fn own_trap_capture_disarms_without_damage_and_next_round_clears_trap_budgets() {
+    let mut game = blank();
+    contract(&mut game, 0, "雨四光");
+    game.hyper_hp = Some([32; 2]);
+    game.field = vec![1];
+    game.set_trap(0, 1, game.board_revision).unwrap();
+    game.capture_or_place(0, 0, &[1], None);
+    assert_eq!(game.hyper_traps, [None; 2]);
+    assert_eq!(game.hyper_damage.len(), 1);
+    assert_eq!(game.hyper_hp.unwrap()[0], 32);
+    game.settle(None, 0);
+    game.next_round().unwrap();
+    assert_eq!(game.hyper_trap_used, [false; 2]);
+    assert_eq!(game.hyper_attack_used, [false; 2]);
+    assert_eq!(game.hyper_guard_used, [false; 2]);
+}
+
+#[test]
+fn drawn_choice_previews_only_the_revealed_card_and_match_the_selected_trap_target() {
+    let mut game = blank();
+    contract(&mut game, 1, "雨四光");
+    game.hyper_hp = Some([32; 2]);
+    game.phase = Phase::DrawChoice;
+    game.drawn_card = Some(0);
+    game.hands = [vec![20], vec![24]];
+    game.field = vec![1, 2];
+    game.hyper_traps[1] = Some(1);
+    let previews = game.hyper_state(Some(0)).unwrap().damage_previews;
+    assert_eq!(previews.len(), 2);
+    assert!(previews.iter().all(|p| p.card_id == 0));
+    assert_eq!(previews[0].damage.len(), 2);
+    assert_eq!(previews[1].damage.len(), 1);
+    assert!(game.hyper_state(Some(1)).unwrap().damage_previews.is_empty());
+    game.choose(0, 1).unwrap();
+    assert_eq!(game.events.last().unwrap().hyper.as_ref().unwrap().damage, previews[0].damage);
+    assert_eq!(game.hyper_hp, Some([28, 30]));
+}
+
+#[test]
+fn category_effects_differ_while_preserving_the_shared_starter_draw() {
+    for role in ["赤短", "青短", "花見で一杯", "月見で一杯", "タネ", "短冊", "カス", "三光", "雨四光", "四光", "五光"] {
+        let mut g = blank();
+        contract(&mut g, 0, role);
+        g.deck = (0..48).collect();
+        g.hyper_chain[0] = 1;
+        g.hyper_turn_captures[0] = 1;
+        g.queue_hyper_effects(0, &[32, 1, 2]);
+        assert_eq!(g.hyper_pending_draws[0], 1, "{role}");
+        assert!(g.hyper_chain[0] >= 1);
+    }
+    let mut night = blank();
+    contract(&mut night, 0, "月見で一杯");
+    night.capture_or_place(0, 2, &[], None);
+    night.capture_or_place(0, 3, &[], None);
+    assert_eq!(night.hyper_boosts, [2, 0]);
+    assert_eq!(night.hyper_bloom, [0, 2]);
+    assert_eq!(night.hyper_pending_draws, [0, 0]);
+}
+
+#[test]
+fn sacrifice_points_scale_bounty_chain_and_chaff_with_bounded_budgets() {
+    for points in [1, 2, 3, 9] {
+        let strength = points.min(3);
+        let mut hunt = blank();
+        contract(&mut hunt, 0, "タネ");
+        hunt.hyper_contracts[0][0].points = points;
+        hunt.hyper_bloom[1] = 5;
+        for _ in 0..3 { hunt.queue_hyper_effects(0, &[4, 12]); }
+        assert_eq!(hunt.hyper_bloom, [1 + strength, 5 - strength]);
+        hunt.reset_hyper_turn(0);
+        hunt.hyper_bloom[1] = 0;
+        hunt.queue_hyper_effects(0, &[4]);
+        assert_eq!(hunt.hyper_bloom[0], 2 + strength);
+        let mut ink = blank();
+        contract(&mut ink, 0, "短冊");
+        ink.hyper_contracts[0][0].points = points;
+        ink.hyper_chain[0] = 2;
+        ink.queue_hyper_effects(0, &[1]);
+        ink.hyper_chain[0] += 1;
+        ink.queue_hyper_effects(0, &[5]);
+        assert_eq!(ink.hyper_chain[0], 3 + strength as u8);
+        assert_eq!(ink.hyper_pending_draws[0], 0);
+        assert_eq!(ink.hyper_overdrive_used[0], if strength == 3 { 2 } else { 1 });
+        let mut grass = blank();
+        contract(&mut grass, 0, "カス");
+        grass.hyper_contracts[0][0].points = points;
+        grass.queue_hyper_effects(0, &[2, 3]);
+        assert_eq!(grass.hyper_bloom[0], 2 * strength);
+        grass.queue_hyper_effects(0, &[6, 7]);
+        grass.queue_hyper_effects(0, &[10]);
+        assert_eq!(grass.hyper_bloom[0], 3 * strength);
+        assert_eq!(grass.hyper_pending_draws[0], 0);
+    }
+}
+
+#[test]
+fn chain_reserves_only_one_extra_draw_per_turn_even_when_ink_crosses_two_milestones() {
+    let mut g = blank();
+    contract(&mut g, 0, "短冊");
+    g.hyper_contracts[0][0].points = 3;
+    g.deck = (0..48).collect();
+    g.hyper_chain[0] = 3;
+    g.queue_hyper_effects(0, &[1]); // 2 -> 6, two milestones in one acquisition
+    assert_eq!(g.hyper_chain[0], 6);
+    assert_eq!(g.hyper_boosts[0], 2);
+    assert_eq!(g.hyper_pending_draws[0], 1);
+    for chain in [9, 12, 15] {
+        g.hyper_chain[0] = chain;
+        g.queue_hyper_effects(0, &[2]);
+    }
+    assert_eq!(g.hyper_pending_draws[0], 1);
+    assert_eq!(g.hyper_boosts[0], 2);
+    g.reset_hyper_turn(0);
+    g.hyper_chain[0] = 18;
+    g.queue_hyper_effects(0, &[2]);
+    assert_eq!(g.hyper_pending_draws[0], 1);
+
+    let mut light = blank();
+    contract(&mut light, 1, "三光");
+    light.hyper_chain[1] = 3;
+    assert_eq!(light.counter_draw_budget(0), 0); // no automatic acceleration against a light contract
 }
