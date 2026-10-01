@@ -5,6 +5,7 @@ export type RoomSummary = {
   locked: boolean;
   mode: Mode;
   hyperEnabled: boolean;
+  practiceRole?: string | null;
   rounds: number;
   players: number;
   spectators: number;
@@ -83,6 +84,7 @@ export type RoomView = {
   hostId: string;
   mode: Mode;
   hyperEnabled: boolean;
+  practiceRole?: string | null;
   rounds: number;
   round: number;
   status: "waiting" | "playing" | "finished";

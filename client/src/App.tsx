@@ -32,13 +32,14 @@ import CardArtCredit from "./components/CardArtCredit";
 import Scene from "./components/Scene";
 import GameRoom from "./components/GameRoom";
 import { cards, cardImage } from "./lib/cards";
+import { HYPER_CONTRACTS } from "./lib/hyperContracts";
 import { CARD_SKIN_OPTIONS, useCardSkin } from "./lib/cardSkin";
 import { playSound, setMuted } from "./lib/audio";
 import { api, ApiError, readSession, saveSession } from "./lib/api";
 import type { Mode, RoomSummary, RoomView, Session } from "./lib/types";
 
 type Page = "lobby" | "collection" | "guide" | "settings";
-type Modal = "create" | "profile" | "leave" | RoomSummary | null;
+type Modal = "practice" | "create" | "profile" | "leave" | RoomSummary | null;
 const YAKU = [
   {
     name: "五光",
@@ -88,20 +89,6 @@ const YAKU = [
     ids: [2, 6, 10, 14, 18],
     text: "かす札を10枚。以降1枚ごとに＋1文。盃はかすにも数える。",
   },
-];
-const HYPER_CONTRACTS = [
-  { source: "猪鹿蝶", name: "暴走", effect: "タネで追加めくり（各手番3回）。発動ごと相手の花力＋1。" },
-  { source: "赤短", name: "詠唱", effect: "同月の場札がない短冊で、別月の短冊を取れる。" },
-  { source: "青短", name: "倍喰い", effect: "札を取るたび倍率＋0.25。各手番2回まで。" },
-  { source: "花見で一杯", name: "宴", effect: "光札・盃で花力＋3（各手番2回）。勝って配当を回収する。" },
-  { source: "月見で一杯", name: "逆転月", effect: "最初の空振りで倍率＋0.5、代わりに相手の花力＋2。" },
-  { source: "三光", name: "修羅場", effect: "双方HP32で役撃戦。各手番の初撃＋1。新成立・増点した役も攻撃力に。" },
-  { source: "雨四光", name: "伏兵", effect: "1局3回まで、8種から抽選2択。罠の場所も相手には秘密、取得されるまで持続。奪還・手札交換・徴税・倍率妨害などが発動！" },
-  { source: "四光", name: "看破", effect: "相手の全手札と、自分の手番の次の山札を自分だけ確認。情報を読んで役を狙う。" },
-  { source: "五光", name: "天啓", effect: "看破の情報能力＋各手番の初回取得まで月越え取得が可能。月越えの代償は相手の花力＋2。" },
-  { source: "タネ", name: "追猟", effect: "最初のタネで花力＋1、相手の花力を犠牲役点ぶん奪う（最大3）。" },
-  { source: "短冊", name: "連筆", effect: "最初の短冊でCHAINを犠牲役点ぶん追加成長（最大3）。" },
-  { source: "カス", name: "草蔵", effect: "カス1枚ごと犠牲役点ぶんの花力（最大3/枚、各手番3枚）。" },
 ];
 function FlowerMark({ small = false }: { small?: boolean }) {
   return (
@@ -288,6 +275,7 @@ export default function App() {
     rounds: number,
     password = "",
     hyper = false,
+    practiceRole?: string,
   ) => {
     setBusy(true);
     try {
@@ -295,7 +283,7 @@ export default function App() {
       const result = await api<{ roomId: string }>("/rooms", {
         method: "POST",
         token: s.token,
-        body: { name, mode, rounds, password, hyper },
+        body: { name, mode, rounds, password, hyper, practiceRole },
       });
       openRoom(result.roomId);
       playSound("deal");
@@ -863,6 +851,9 @@ export default function App() {
                       CPU対戦をはじめる
                       <ArrowRight size={16} />
                     </button>
+                    <button className="button secondary practice-button" disabled={busy || !online} onClick={() => setModal("practice")}>
+                      <Sparkles size={16} />ハイパー契約をお試し
+                    </button>
                   </div>
                 </div>
               </section>
@@ -961,6 +952,17 @@ export default function App() {
             <X size={15} />
           </button>
         </div>
+      )}
+      {modal === "practice" && (
+        <ModalShell title="ハイパー契約のお試し" onClose={closeModal}>
+          <p className="form-intro">役と賭け金を用意し、選んだ契約が発動した状態でCPUと1局。効果とリスクは通常どおり。対局中も契約を選び直して試せます。</p>
+          <div className="practice-contract-list">
+            {HYPER_CONTRACTS.map(contract => <button key={contract.source} className="button secondary" disabled={busy || !online}
+              onClick={() => void create(`契約お試し · ${contract.name}`, "cpu", 1, "", true, contract.source)}>
+              <strong>{contract.name} <small>{contract.source}</small></strong><span>{contract.effect}</span>
+            </button>)}
+          </div>
+        </ModalShell>
       )}
       {modal === "create" && (
         <ModalShell title="今宵の卓を、ひらく。" onClose={closeModal}>

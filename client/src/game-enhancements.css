@@ -1703,3 +1703,17 @@ html[data-motion="false"] .player-chain.is-fever { animation: none; }
 .hand-attack-preview { position: absolute; bottom: 3px; left: 2px; right: 2px; z-index: 2; display: grid; gap: 1px; padding: 2px 0; color: #fff4df; background: #23142de8; border: 1px solid #bc8dde; border-radius: 4px; text-align: center; pointer-events: none; line-height: 1.15; }
 .hand-attack-preview b { font-size: clamp(8px, 1.1cqw, 11px); }
 .hand-attack-preview small { font-size: clamp(7px, .9cqw, 9px); white-space: nowrap; }
+
+.practice-contract-list { display: grid; gap: 8px; }
+.practice-contract-list .button { display: grid; gap: 5px; text-align: left; white-space: normal; }
+.practice-contract-list strong { color: var(--gold, #e8ce89); }
+.practice-contract-list small { margin-left: 8px; font-weight: normal; }
+.practice-contract-list span { font-size: 11px; font-weight: normal; line-height: 1.6; }
+.hyper-practice-controls { flex-shrink: 0; margin: 0 0 7px; padding: 6px 10px; border: 1px solid #89734f; border-radius: 7px; background: #211b20; font-size: 11px; }
+.hyper-practice-controls summary { cursor: pointer; color: #e8ce89; }
+.hyper-practice-controls p { margin: 5px 0; color: #c6c7b9; line-height: 1.5; }
+.hyper-practice-controls > div { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
+.hyper-practice-controls label { display: grid; gap: 4px; }
+.hyper-practice-controls select { max-width: 100%; font-size: 12px; }
+
+.practice-button + .practice-button { margin-top: 8px; }

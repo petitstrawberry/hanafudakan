@@ -334,6 +334,39 @@ impl Game {
         Self::with_rng(rounds, true, StdRng::from_entropy())
     }
 
+    pub fn supports_practice_role(role: &str) -> bool {
+        hyper_contract_for_role(role).is_some()
+    }
+
+    /// A one-round CPU sandbox: fund a real source role, then use the ordinary
+    /// contract transaction. The source cards return to the 48-card redeal.
+    pub fn new_hyper_practice(role: &str, sequence: u64) -> Result<Self, String> {
+        let source: &[u8] = match role {
+            "猪鹿蝶" => &[20, 24, 36], "赤短" => &[1, 5, 9], "青短" => &[21, 33, 37],
+            "花見で一杯" => &[8, 32], "月見で一杯" => &[28, 32],
+            "三光" => &[0, 8, 28], "雨四光" => &[0, 8, 28, 40],
+            "四光" => &[0, 8, 28, 44], "五光" => &[0, 8, 28, 40, 44],
+            "タネ" => &[4, 12, 16, 20, 24], "短冊" => &[1, 5, 13, 17, 25],
+            "カス" => &[2, 3, 6, 7, 10, 11, 14, 15, 18, 19],
+            _ => return Err("お試しできる契約を選んでください。".into()),
+        };
+        let mut game = Self::new_hyper(1);
+        game.set_event_sequence(sequence);
+        game.scores = [0; 2];
+        game.winner = None;
+        game.round_points = 0;
+        game.log.clear();
+        game.hands = [vec![], vec![]];
+        game.field.clear();
+        game.deck = (0..48).filter(|card| !source.contains(card)).collect();
+        game.captured = [source.to_vec(), vec![]];
+        game.phase = Phase::Decision;
+        game.turn = 0;
+        game.hyper(0, role.into())?;
+        game.push_log("契約お試し：役と賭け金を用意して開始。CPUが先手。通常の効果・リスクで1局を遊べます。".into());
+        Ok(game)
+    }
+
     /// Seed a new match from the room's last event ID. Never rewind an active
     /// game's sequence, so reconnecting clients cannot mistake a new movement
     /// for an event they have already played.
@@ -1972,6 +2005,30 @@ mod tests {
         let player = game.turn;
         game.play(player, game.hands[player][0], None).unwrap();
         assert_eq!(game.events[0].id, 102);
+    }
+
+    #[test]
+    fn all_practice_contracts_use_real_transactions_and_keep_48_cards() {
+        for role in ["猪鹿蝶", "赤短", "青短", "花見で一杯", "月見で一杯", "三光", "雨四光", "四光", "五光", "タネ", "短冊", "カス"] {
+            for _ in 0..20 {
+                let mut game = Game::new_hyper_practice(role, 80).unwrap();
+                let mut expected = hyper_contract_for_role(role).unwrap();
+                describe_scaled_contract(&mut expected);
+                assert_eq!(game.hyper_contracts[0], vec![expected.clone()]);
+                assert!(game.hyper_contracts[1].is_empty());
+                assert_eq!(game.hyper_stake, [expected.points, 0]);
+                assert_eq!(game.scores, [0,0]); assert_eq!(game.rounds,1);
+                assert_eq!(game.phase,Phase::Play); assert_eq!(game.turn,1);
+                assert_eq!(game.hyper_hp, (role=="三光").then_some([32,32]));
+                assert_eq!(game.event_sequence(),80); assert!(game.events.is_empty());
+                assert!(game.captured.iter().all(Vec::is_empty));
+                let mut cards:Vec<_>=game.hands.iter().flatten().chain(&game.field).chain(&game.deck).copied().collect();
+                cards.sort_unstable(); assert_eq!(cards,(0..48).collect::<Vec<_>>());
+                for _ in 0..150 { if game.phase==Phase::Finished {break;} game.cpu_action(); }
+                assert_eq!(game.phase,Phase::Finished,"{role} practice must terminate");
+            }
+        }
+        assert!(Game::new_hyper_practice("unknown",0).is_err());
     }
 
     #[test]

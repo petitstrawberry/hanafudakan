@@ -29,6 +29,7 @@ import {
 } from "../lib/yakuAnnouncements";
 import { cards, cardImage } from "../lib/cards";
 import { useCardSkin } from "../lib/cardSkin";
+import { HYPER_CONTRACTS } from "../lib/hyperContracts";
 import { playSound } from "../lib/audio";
 import { MUSIC_PLAYLISTS, setMusicMode } from "../lib/music";
 import MusicNowPlaying from "./MusicNowPlaying";
@@ -105,6 +106,7 @@ const motionEnabled = () =>
 const signature = (room: RoomView) =>
   JSON.stringify([
     room.round,
+    room.practiceRole,
     room.boardRevision,
     room.phase,
     room.turn,
@@ -1111,6 +1113,7 @@ export default function GameRoom({
           </button>
         </div>
       </div>
+      {room.practiceRole && room.myIndex === 0 && <HyperPracticeControls role={room.practiceRole} disabled={!connected || busy || animating || submitting || dealing} send={send} />}
       <div className={`game-layout ${showChat ? "chat-open" : ""}`}>
         <div className="game-primary">
           <div
@@ -1969,4 +1972,19 @@ function PlayerBar({
       {hyper && <HyperPlayerStatus state={hyper} index={playerIndex} name={player.name} viewer={self ? playerIndex : null} />}
     </div>
   );
+}
+
+function HyperPracticeControls({ role, disabled, send }: { role: string; disabled: boolean; send: (command: object) => void }) {
+  const [selected, setSelected] = useState(role);
+  const panel = useRef<HTMLDetailsElement>(null);
+  useEffect(() => setSelected(role), [role]);
+  const contract = HYPER_CONTRACTS.find(candidate => candidate.source === selected);
+  return <details ref={panel} className="hyper-practice-controls">
+    <summary>契約お試し · {HYPER_CONTRACTS.find(candidate => candidate.source === role)?.name} · 選び直す</summary>
+    <p>役と賭け金を用意したCPUとの1局。試し直すと得点・札・罠をリセットします。</p>
+    <div><label>試す契約<select aria-label="試す契約" value={selected} disabled={disabled} onChange={event => setSelected(event.target.value)}>
+      {HYPER_CONTRACTS.map(candidate => <option key={candidate.source} value={candidate.source}>{candidate.name}（{candidate.source}）</option>)}
+    </select></label><button className="button secondary compact" disabled={disabled} onClick={() => { if (panel.current) panel.current.open = false; send({type:"practice",role:selected}); }}>この契約で試し直す</button></div>
+    <p>{contract?.effect}</p>
+  </details>;
 }
