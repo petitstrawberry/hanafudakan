@@ -840,6 +840,12 @@ enum Command {
     Hyper {
         role: String,
     },
+    Trap {
+        #[serde(rename = "targetId")]
+        target_id: u8,
+        #[serde(rename = "boardRevision")]
+        board_revision: u32,
+    },
     Chat {
         text: String,
     },
@@ -964,6 +970,10 @@ fn apply_command(room: &mut Room, session: &Session, command: Command) -> Result
                         .as_mut()
                         .ok_or("対局が始まっていません")?
                         .decision(index, koikoi)?;
+                }
+                Command::Trap { target_id, board_revision } => {
+                    room.game.as_mut().ok_or("対局が始まっていません")?
+                        .set_trap(index, target_id, board_revision)?;
                 }
                 Command::Hyper { role } => {
                     room.game
@@ -1823,7 +1833,7 @@ mod tests {
         assert_eq!(view["hand"].as_array().unwrap().len(), 8);
         assert_eq!(view["field"].as_array().unwrap().len(), 8);
         assert_eq!(view["hyper"]["stake"], json!([5, 0]));
-        assert_eq!(view["hyper"]["hp"], json!([18, 18]));
+        assert_eq!(view["hyper"]["hp"], json!([32, 32]));
         assert_eq!(view["hyper"]["multiplier"], json!([175, 100]));
         assert_eq!(view["turn"], 1);
         assert_eq!(view["events"], json!([]));
@@ -1837,4 +1847,93 @@ mod tests {
         assert_eq!(spectator["handTargets"], json!([]));
         assert_eq!(spectator["hyper"]["options"], json!([]));
     }
+    #[tokio::test]
+    async fn trap_commands_broadcast_public_marks_and_keep_private_previews_on_reconnect() {
+        let state = AppState::default();
+        let router = app(state.clone(), "/nonexistent");
+        let token = session(&router, "罠の契約者").await;
+        let (_, created) = request(router, "POST", "/api/rooms", Some(&token),
+            json!({"name":"Rain trap","rounds":3,"mode":"cpu","hyper":true})).await;
+        let mut store = state.inner.lock().unwrap();
+        let session = store.sessions[&token].clone();
+        let room = store.rooms.get_mut(created["roomId"].as_str().unwrap()).unwrap();
+        let (tx, mut rx) = mpsc::channel(32);
+        room.connections.insert("test".into(), Connection { player_id: session.player_id.clone(), tx });
+        apply_command(room, &session, Command::Start).unwrap();
+        let game = room.game.as_mut().unwrap();
+        game.phase = Phase::Decision;
+        game.turn = 0;
+        game.hands = [vec![], vec![]];
+        game.field.clear();
+        game.captured = [vec![0, 8, 28, 40], vec![]];
+        game.deck = (0..48).filter(|c| ![0, 8, 28, 40].contains(c)).collect();
+        apply_command(room, &session, Command::Hyper { role: "雨四光".into() }).unwrap();
+        let game = room.game.as_mut().unwrap();
+        game.turn = 0;
+        let revision = game.board_revision;
+        let target = game.field[0];
+        let field = game.field.clone();
+        let command: Command = serde_json::from_value(json!({"type":"trap","targetId":target,"boardRevision":revision})).unwrap();
+        apply_command(room, &session, command).unwrap();
+        room.broadcast();
+        let message = rx.try_recv().unwrap();
+        let view = &message["room"];
+        assert_eq!(view["hyper"]["traps"], json!([target, null]));
+        assert_eq!(view["hyper"]["trapReady"], json!([false, false]));
+        assert_eq!(view["turn"], 0);
+        assert_eq!(view["boardRevision"], revision);
+        assert_eq!(view["field"], json!(field));
+        assert!(!view["hyper"]["damagePreviews"].as_array().unwrap().is_empty());
+        for preview in view["hyper"]["damagePreviews"].as_array().unwrap() {
+            assert!(view["hand"].as_array().unwrap().contains(&preview["cardId"]));
+        }
+        let reconnect = serde_json::to_value(room.view(&session.player_id)).unwrap();
+        assert_eq!(reconnect["hyper"]["traps"], view["hyper"]["traps"]);
+        assert_eq!(reconnect["hyper"]["damagePreviews"], view["hyper"]["damagePreviews"]);
+        let spectator = serde_json::to_value(room.view("spectator")).unwrap();
+        assert_eq!(spectator["hyper"]["traps"], json!([target, null]));
+        assert_eq!(spectator["hyper"]["damagePreviews"], json!([]));
+        assert_eq!(spectator["hand"], json!([]));
+        let opponent = serde_json::to_value(room.view(&room.players[1].id)).unwrap();
+        assert_eq!(opponent["hyper"]["damagePreviews"], json!([]));
+        let before = format!("{:?}", room.game);
+        assert!(apply_command(room, &session, Command::Trap { target_id: target, board_revision: revision }).is_err());
+        assert!(apply_command(room, &session, Command::Trap { target_id: target, board_revision: revision + 1 }).is_err());
+        assert_eq!(before, format!("{:?}", room.game));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires built client, Node and Playwright; invokes a real local HTTP/WebSocket server"]
+    async fn browser_hyper_live_e2e() {
+        let state = AppState::default();
+        let router = app(state.clone(), "client/dist");
+        let mut fixtures = vec![];
+        for kind in ["capture", "shield", "exposure", "mutual", "attacker_ko", "draw_choice", "engines"] {
+            let host = session(&router, "罠の契約者").await;
+            let guest = session(&router, "攻撃する人").await;
+            let (_, created) = request(router.clone(), "POST", "/api/rooms", Some(&host),
+                json!({"name":kind,"rounds":3,"mode":"pvp","hyper":true})).await;
+            let id = created["roomId"].as_str().unwrap();
+            let (status, _) = request(router.clone(), "POST", &format!("/api/rooms/{id}/join"), Some(&guest), json!({})).await;
+            assert_eq!(status, StatusCode::OK);
+            let mut store = state.inner.lock().unwrap();
+            let sessions: Vec<_> = [&host, &guest].iter().map(|token| {
+                let s = &store.sessions[*token];
+                json!({"token":token,"playerId":s.player_id,"name":s.name})
+            }).collect();
+            store.rooms.get_mut(id).unwrap().game = Some(Game::browser_fixture(kind));
+            fixtures.push(json!({"kind":kind,"roomId":id,"sessions":sessions}));
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+        let result = tokio::time::timeout(Duration::from_secs(150), tokio::process::Command::new("node")
+            .arg("scripts/qa-hyper-live.mjs").env("QA_BASE_URL", format!("http://{address}"))
+            .env("QA_LIVE_FIXTURES", serde_json::to_string(&fixtures).unwrap()).kill_on_drop(true).output()).await;
+        server.abort();
+        let output = result.expect("live browser E2E timeout").expect("Node could not launch");
+        println!("{}", String::from_utf8_lossy(&output.stdout));
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+
 }

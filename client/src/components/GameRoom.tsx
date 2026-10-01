@@ -32,10 +32,10 @@ import { playSound } from "../lib/audio";
 import { MUSIC_PLAYLISTS, setMusicMode } from "../lib/music";
 import MusicNowPlaying from "./MusicNowPlaying";
 import { getYakuStatuses } from "../lib/yakuStatus";
-import { boardChanged, canCashOutWithContracts, captureTargets } from "../lib/hyperGame";
+import { boardChanged, canCashOutWithContracts, captureTargets, canSetTrap, damageBreakdown, previewFor } from "../lib/hyperGame";
 import { fitFieldLayout } from "../lib/fieldLayout";
 import { reconcileFieldSlots, type FieldSlot } from "../lib/fieldSlots";
-import type { PublicGameEvent, RoomView } from "../lib/types";
+import type { PublicGameEvent, RoomView, HyperDamage } from "../lib/types";
 import "../game-enhancements.css";
 import "../game-layout.css";
 
@@ -82,6 +82,10 @@ type HpAttack = {
   target: Position;
   defender: number;
   damage: number;
+  power: number;
+  blocked: number;
+  kind: string;
+  breakdown: string;
   remaining: number;
   cardIds: number[];
   stage: "travel" | "impact" | "burst";
@@ -116,6 +120,9 @@ const signature = (room: RoomView) =>
     room.hyper?.options,
     room.hyper?.hp,
     room.hyper?.multiplier,
+    room.hyper?.traps,
+    room.hyper?.trapReady,
+    room.hyper?.damagePreviews,
   ]);
 const sleep = (duration: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, duration));
@@ -149,6 +156,7 @@ export default function GameRoom({
   const latest = useRef<RoomView>(incoming);
   latest.current = incoming;
   const [selected, setSelected] = useState<number | null>(null);
+  const [trapSelecting, setTrapSelecting] = useState(false);
   const [hovered, setHovered] = useState<number | null>(null);
   const [assist, setAssist] = useState(
     () => localStorage.getItem("hana-assist") !== "false",
@@ -281,6 +289,8 @@ export default function GameRoom({
   const locked =
     !connected || reconnectPending.current || busy || animating || submitting || dealing;
   const canPlay = myTurn && playing && !locked;
+  const trapReady = canSetTrap(room);
+  useEffect(() => { setTrapSelecting(false); }, [boardKey, room.turn, room.phase, trapReady]);
   const activeCard = drawnChoice ? room.drawnCard : selected;
   const targets =
     activeCard === null
@@ -652,42 +662,53 @@ export default function GameRoom({
               : player.handCount,
         })),
       };
-      const defender = 1 - event.player;
-      const previousHp = before.hyper?.hp?.[defender];
-      const remainingHp = event.hyper?.hp?.[defender];
       setFlight(null);
       setLandingCard(null);
-      if (event.captured && previousHp !== undefined && remainingHp !== undefined && remainingHp < previousHp) {
-        const hpTarget = positionOf(table.current?.querySelector(
-          `[data-player-index="${defender}"] .hyper-hp meter`,
-        ) || null, center);
-        const attack: HpAttack = {
-          sequence: event.id, source: target, target: hpTarget, defender,
-          damage: previousHp - remainingHp, remaining: remainingHp,
-          cardIds: [event.cardId, ...event.targetIds],
-          stage: "travel", reducedMotion: !animate,
-        };
-        // The cards settle first; HP changes exactly when the projectile lands.
-        updateView({ ...nextView, hyper: { ...nextView.hyper!, hp: before.hyper!.hp } });
-        setHpAttack(attack);
-        await sleep(animate ? 260 : 0);
-        if (!alive.current || epoch !== playbackEpoch.current) return;
-        updateView(nextView);
-        setHpAttack({ ...attack, stage: "impact" });
-        playSound("hp_hit");
-        await sleep(remainingHp === 0 ? 180 : 360);
-        if (!alive.current || epoch !== playbackEpoch.current) return;
-        if (remainingHp === 0) {
-          setHpAttack({ ...attack, stage: "burst" });
-          playSound("ko_blast");
-          // Keep the final snapshot queued until the explosion has dissipated.
-          await sleep(animate ? 1800 : 800);
+      const hpChanges: HyperDamage[] = event.hyper?.damage ?? [0, 1].flatMap(defender => {
+        const previousHp = before.hyper?.hp?.[defender];
+        const hp = event.hyper?.hp?.[defender];
+        return previousHp !== undefined && hp !== undefined && hp < previousHp ? [{
+          attacker: 1 - defender, defender, kind: "legacy", cards: previousHp - hp, roles: 0, roleGains: [], chain: 0, contract: 0, exposure: 0, blocked: 0, damage: previousHp - hp, power: previousHp - hp,
+          hpBefore: previousHp, hpAfter: hp,
+        }] : [];
+      });
+      let animatedHp = before.hyper?.hp?.slice();
+      if (animatedHp && hpChanges.length) {
+        updateView({ ...nextView, hyper: { ...nextView.hyper!, hp: animatedHp } });
+        for (const hit of hpChanges) {
+          const defender = hit.defender;
+          const remainingHp = hit.hpAfter;
+          const breakdown = damageBreakdown(hit);
+          setAnnouncement(`${before.players[defender]?.name}：${breakdown}`);
+          const hpTarget = positionOf(table.current?.querySelector(
+            `[data-player-index="${defender}"] .hyper-hp meter`,
+          ) || null, center);
+          const attack: HpAttack = {
+            sequence: event.id, source: target, target: hpTarget, defender,
+            damage: hit.damage, power: hit.power, blocked: hit.blocked, kind: hit.kind, breakdown, remaining: remainingHp,
+            cardIds: [event.cardId, ...event.targetIds], stage: "travel", reducedMotion: !animate,
+          };
+          setHpAttack(attack);
+          await sleep(animate ? 260 : 0);
           if (!alive.current || epoch !== playbackEpoch.current) return;
+          animatedHp[defender] = remainingHp;
+          updateView({ ...nextView, hyper: { ...nextView.hyper!, hp: animatedHp.slice() } });
+          setHpAttack({ ...attack, stage: "impact" });
+          playSound("hp_hit");
+          await sleep(remainingHp === 0 ? 180 : 550);
+          if (!alive.current || epoch !== playbackEpoch.current) return;
+          if (remainingHp === 0) {
+            setHpAttack({ ...attack, stage: "burst" });
+            playSound("ko_blast");
+            await sleep(animate ? 1800 : 800);
+            if (!alive.current || epoch !== playbackEpoch.current) return;
+          }
+          setHpAttack(null);
         }
-        setHpAttack(null);
-      } else updateView(nextView);
+      }
+      updateView(nextView);
       const combo = event.hyper?.chain[event.player] ?? 0;
-      if (remainingHp !== 0 && hyperCharged && combo >= 3 && combo % 3 === 0) {
+      if (!event.hyper?.hp?.includes(0) && hyperCharged && combo >= 3 && Math.floor(combo / 3) > Math.floor((before.hyper?.chain[event.player] ?? 0) / 3)) {
         setCelebration(`${combo} CHAIN · ×${((event.hyper?.multiplier?.[event.player] ?? 100) / 100).toFixed(2)}`);
         playSound("hyper_chain");
       }
@@ -912,10 +933,10 @@ export default function GameRoom({
     send(command);
   };
   const selectCard = (id: number) => {
-    if (!canPlay) return;
+    if (!canPlay || trapSelecting) return;
     playSound("click");
     const matches = captureTargets(room, id);
-    if (matches.length === 2) {
+    if (matches.length === 2 || (hyperState?.hp && matches.length > 0)) {
       setSelected((current) => (current === id ? null : id));
     } else {
       setSelected(null);
@@ -927,6 +948,11 @@ export default function GameRoom({
     }
   };
   const selectField = (id: number) => {
+    if (trapSelecting && canPlay && trapReady) {
+      submit({ type: "trap", targetId: id, boardRevision: room.boardRevision ?? 0 });
+      setTrapSelecting(false);
+      return;
+    }
     if (!myTurn || locked || !targets.includes(id)) return;
     if (drawnChoice) submit({ type: "choose", targetId: id });
     else if (selected !== null)
@@ -947,8 +973,12 @@ export default function GameRoom({
             : myTurn
               ? drawnChoice
                 ? "めくり札です。取る場札を1枚選んでください。"
+                : trapSelecting
+                  ? "罠にする場札を1枚選んでください（相手取得で4ダメージ）。"
                 : selected !== null
-                  ? "光っている場札を1枚選んでください。"
+                  ? hyperState?.hp
+                    ? "場札のダメージ予告を確認して、1枚選んでください。"
+                    : "光っている場札を1枚選んでください。"
                   : "あなたの番です。手札を1枚選んでください。"
               : `${room.players[room.turn]?.name || "対戦相手"}の番です`;
   const sendChat = (event: FormEvent) => {
@@ -1229,23 +1259,30 @@ export default function GameRoom({
                           landingCard === id && !room.field.includes(id);
                         return (
                           <div
-                            className={`field-slot ${landing ? "field-landing-slot" : ""} ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""} ${hyperFlash?.ids.includes(id) ? "hyper-capture-flash" : ""}`}
+                            className={`field-slot ${landing ? "field-landing-slot" : ""} ${trapSelecting && canPlay ? "trap-target" : ""} ${hyperState?.traps?.includes(id) ? "field-trapped" : ""} ${targets.includes(id) && myTurn && !animating ? "match-target" : assistTargets.includes(id) && canPlay ? "assist-target" : ""} ${flight?.event.targetIds.includes(id) && (flight.stage === "stack" || flight.stage === "collect") ? "card-in-flight" : ""} ${hyperFlash?.ids.includes(id) ? "hyper-capture-flash" : ""}`}
                             key={id}
                             style={fieldWobble(id, index) as CSSProperties}
                             data-landing-card={landing ? id : undefined}
                           >
                             <Card
                               id={id}
+                              description={activeCard !== null ? previewFor(room, activeCard, id).map(damageBreakdown).join("\n") : undefined}
                               onClick={
-                                targets.includes(id) && myTurn
+                                (targets.includes(id) && myTurn) || (trapSelecting && canPlay)
                                   ? () => selectField(id)
                                   : undefined
                               }
                               disabled={locked}
                             />
-                            {targets.includes(id) && myTurn && !animating && (
+                            {hyperState?.traps?.includes(id) && <span className="field-trap-label">
+                              {hyperState.traps.map((trap, owner) => trap === id ? `${room.players[owner]?.name}の罠` : "").filter(Boolean).join("・")}
+                            </span>}
+                            {targets.includes(id) && myTurn && !animating && !trapSelecting && (
                               <span className="field-target-label">
                                 {targets.length === 3 ? "まとめ取り" : "取る"}
+                                {activeCard !== null && previewFor(room, activeCard, id).map((hit, i) => <small key={i} title={damageBreakdown(hit)}>
+                                  {hit.kind === "trap" ? "罠 " : ""}{hit.defender === own ? "自分" : "相手"} −{hit.damage} / 力{hit.power}
+                                </small>)}
                               </span>
                             )}
                           </div>
@@ -1263,6 +1300,23 @@ export default function GameRoom({
                     className={`connection-dot ${connected ? "online" : ""}`}
                   />
                   <span className="turn-status-text" title={status}>{status}</span>
+                  {activeCard === null && hyperState && !locked && !trapSelecting && room.log.some(line => /暴走！|追猟！|連筆！|宴！|草蔵！|倍喰い！|逆転月！/.test(line)) && <details className="combat-preview contract-history">
+                    <summary>契約の発動</summary>
+                    <div>{room.log.filter(line => /暴走！|追猟！|連筆！|宴！|草蔵！|倍喰い！|逆転月！/.test(line)).slice(-8).map((line, i) => <p key={i}>{line}</p>)}</div>
+                  </details>}
+                  {activeCard === null && hyperState?.hp && !locked && !trapSelecting && room.log.some(line => line.includes("HP減少")) && <details className="combat-preview combat-history">
+                    <summary>攻撃履歴</summary>
+                    <div>{room.log.filter(line => line.includes("HP減少")).slice(-8).map((line, i) => <p key={i}>{line}</p>)}</div>
+                  </details>}
+                  {activeCard !== null && hyperState?.hp && !locked && <details className="combat-preview">
+                    <summary>攻撃内訳</summary>
+                    <div>{targets.map(target => <p key={target}><b>{nameOf(target)}</b><br />
+                      {previewFor(room, activeCard!, target).map((hit, i) => <span key={i}>{hit.defender === own ? "自分" : "相手"}：{damageBreakdown(hit)}<br /></span>)}
+                    </p>)}</div>
+                  </details>}
+                  {trapReady && canPlay && selected === null && <button aria-pressed={trapSelecting} onClick={() => { setSelected(null); setTrapSelecting(v => !v); }}>
+                    {trapSelecting ? "罠を取消" : "罠を指定"}
+                  </button>}
                   {selected !== null && !locked && (
                     <button onClick={() => setSelected(null)}>取消</button>
                   )}
@@ -1757,7 +1811,7 @@ function HpAttackOverlay({ attack }: { attack: HpAttack }) {
     {attack.stage === "impact" && <div className="hp-attack-impact" style={{ left: tx, top: ty }}>
       <i className="hp-attack-ring" />
       {Array.from({ length: 8 }, (_, i) => <i key={i} className="hp-attack-spark" style={{ "--spark-angle": `${i * 45}deg` } as CSSProperties} />)}
-      <strong className="hp-attack-damage" style={{ top: ty < 100 ? 12 : -40 }}>−{attack.damage}<small>{attack.remaining === 0 ? "K.O." : "DAMAGE"}</small></strong>
+      <strong className="hp-attack-damage" style={{ top: ty < 100 ? 12 : -40 }}>−{attack.damage}<small>{attack.remaining === 0 ? "K.O." : `${attack.blocked ? `防御${attack.blocked} · ` : attack.kind === "trap" ? "罠 · " : ""}威力${attack.power}`}</small></strong>
     </div>}
     {attack.stage === "burst" && <div className="ko-finale">
       <div className="ko-explosion-origin" style={{ left: tx, top: ty }}>
@@ -1800,19 +1854,19 @@ function HyperPlayerStatus({ state, index, name }: {
           <summary>{contracts.length ? contracts.map(c => c.name).join("・") : "未契約"}</summary>
           <div className="player-contract-popover">
             <strong>契約と連鎖</strong>
-            <p>最初の獲得で追加めくり。取れた手番はCHAINを持ち越し、3連鎖ごとに追加めくりと倍率＋0.25。追加めくりは各手番4回まで。</p>
-            <p>未契約で相手が3CHAIN以上なら、自分の通常めくりの後に各手番1回だけ反撃めくり。山札が空なら発動しません。</p>
+            <p>最初の獲得で追加めくり1回。取れた手番はCHAINを持ち越し、3連鎖ごとに倍率＋0.25（各手番2回）。CHAINの追加めくりは各手番1回、暴走は別に最大3回。</p>
+            <p>未契約で相手が暴走・3CHAIN以上なら、自分の通常めくりの後に各手番1回だけ反撃めくり。山札が空なら発動しません。</p>
             {contracts.length > 0 && <p>あがりには倍率前の役点合計が{Math.max(...contracts.map(c => c.points))}文を超え、最後の契約後にこいこいが必要（{state.cashoutKoiReady?.[index] ? "済" : "未"}）。複数契約時は最大値を採用。K.O.には適用しません。</p>}
             <p>倍率は契約・連鎖・こいこい・能力で上昇（最大×8）。賭け金と花力は勝った時だけ得点になります。</p>
-            {contracts.map(c => <p key={c.id}><b>{c.name}</b> · {c.description}</p>)}
-            {state.hp && <p>修羅場：双方が取得枚数ぶん攻撃。3連鎖以上は＋1。HP0でK.O.、役でのあがりも可能。</p>}
+            {contracts.map(c => <p key={c.id}><b>{c.name}</b>（{c.source}・犠牲{c.points}文） · {c.description}</p>)}
+            {state.hp && <p>修羅場：札枚数＋新成立・増点した役の文（最大10）＋3CHAINから1＋各手番初撃の契約威力。合計16まで、防御で軽減。倍率・賭け金は攻撃力に含めません。罠は別の4攻撃。双方HP0は相打ち・配当なし。役あがりも可能。</p>}
           </div>
         </details>
       </div>
       <div className={`hyper-hp ${hp !== undefined && hp <= 6 ? "critical" : ""}`} style={{ visibility: hp === undefined ? "hidden" : undefined }} aria-hidden={hp === undefined}>
         <span>HP</span>
-        <meter min={0} max={state.hpMax ?? 18} value={hp ?? 0} aria-label={`${name}のHP`} />
-        <b key={hp}>{hp}<small>/{state.hpMax ?? 18}</small></b>
+        <meter min={0} max={state.hpMax ?? 32} value={hp ?? 0} aria-label={`${name}のHP`} />
+        <b key={hp}>{hp}<small>/{state.hpMax ?? 32}</small></b>
       </div>
     </div>
   );

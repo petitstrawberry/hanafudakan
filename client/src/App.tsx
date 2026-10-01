@@ -90,15 +90,18 @@ const YAKU = [
   },
 ];
 const HYPER_CONTRACTS = [
-  { source: "猪鹿蝶", name: "暴走", effect: "タネを取ると追加めくり。各手番3回まで。" },
+  { source: "猪鹿蝶", name: "暴走", effect: "タネで追加めくり（各手番3回）。発動ごと相手の花力＋1。" },
   { source: "赤短", name: "詠唱", effect: "同月の場札がない短冊で、別月の短冊を取れる。" },
   { source: "青短", name: "倍喰い", effect: "札を取るたび倍率＋0.25。各手番2回まで。" },
-  { source: "花見で一杯", name: "宴", effect: "光札・盃を取ると追加めくりと花力＋2。各手番2回まで。" },
-  { source: "月見で一杯", name: "逆転月", effect: "各手番最初の空振りで追加めくりと倍率＋0.5。" },
-  { source: "三光・雨四光・四光・五光", name: "修羅場", effect: "双方HP18で対決。取った枚数ぶん攻撃し、3連鎖以上はダメージ＋1。HP0でK.O.。" },
-  { source: "タネ", name: "追猟", effect: "各手番最初のタネ獲得で追加めくりと倍率＋0.25。" },
-  { source: "短冊", name: "連筆", effect: "短冊を取ると追加めくり。各手番2回まで。" },
-  { source: "カス", name: "永久機関", effect: "カスを取ると花力＋1。各手番3回まで、2回目は追加めくり。" },
+  { source: "花見で一杯", name: "宴", effect: "光札・盃で花力＋3（各手番2回）。勝って配当を回収する。" },
+  { source: "月見で一杯", name: "逆転月", effect: "最初の空振りで倍率＋0.5、代わりに相手の花力＋2。" },
+  { source: "三光", name: "修羅場", effect: "双方HP32で役撃戦。各手番の初撃＋1。新成立・増点した役も攻撃力に。" },
+  { source: "雨四光", name: "雨罠", effect: "修羅場＋初撃2。場札に公開罠を指定。相手が取ると4攻撃、自分が取ると解除。次の自分手番で失効。" },
+  { source: "四光", name: "光壁", effect: "修羅場＋初撃2。各手番の最初の被攻撃を2軽減（罠も含む）。" },
+  { source: "五光", name: "天威", effect: "修羅場＋初撃5。ただし全ての被攻撃＋1。高威力と危険を背負う。" },
+  { source: "タネ", name: "追猟", effect: "最初のタネで花力＋1、相手の花力を犠牲役点ぶん奪う（最大3）。" },
+  { source: "短冊", name: "連筆", effect: "最初の短冊でCHAINを犠牲役点ぶん追加成長（最大3）。" },
+  { source: "カス", name: "草蔵", effect: "カス1枚ごと犠牲役点ぶんの花力（最大3/枚、各手番3枚）。" },
 ];
 function FlowerMark({ small = false }: { small?: boolean }) {
   return (
@@ -1333,7 +1336,7 @@ function Guide({
         <article>
           <span>02 · 再配布と連鎖</span>
           <h3>札を配り直して相手から再開</h3>
-          <p>手札・場・山札を配り直します。契約側は手番最初の札獲得で追加めくりを得て、札を取るたびCHAINが伸びます。未契約の相手も3CHAIN以降は反撃めくりを得ます。</p>
+          <p>手札・場・山札を配り直します。最初の取得で追加めくり、札を取るたびCHAINが伸び、3CHAINごと倍率が上がります。CHAINの追加めくりは各手番1回。固有の追加めくりは暴走だけ。暴走の相手には、未契約側も3CHAIN以降に反撃めくりを得ます。</p>
         </article>
         <article>
           <span>03 · 勝負</span>
@@ -1347,7 +1350,7 @@ function Guide({
       </div>
       <div className="section-heading hyper-contract-heading">
         <div>
-          <div className="eyebrow">NINE CONTRACTS</div>
+          <div className="eyebrow">TWELVE CONTRACTS</div>
           <h2>契約と、その効果。</h2>
         </div>
       </div>

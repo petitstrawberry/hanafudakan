@@ -170,8 +170,30 @@ wss://your-domain.example/api/ws?token=<URLエンコードしたtoken>&room=<roo
 
 `handTargets: [{cardId, targets}]` は手番プレイヤーの公開場札に対する合法な取り先です。短冊の月をまたぐ契約も反映しています。相手・観戦者には手札やその取り先を配信しません。めくり時は引き続き `legalTargets` を使います。
 
-`hyper` は通常ルールでは `null`。ハイパーでは `contracts`、`stake`、`bloom`、`chain`、`options` に加え、`multiplier`（100=1倍）、`projected`（現在の役であがった場合の文）、`boosts`（0.25倍単位の成長）、`hp`（修羅場以外はnull）、`hpMax` を配信します。配列はプレイヤー順です。`options` は手番プレイヤーにだけ配信します。`sealed` は互換性のため空配列2つを保持します。
+`hyper` は通常ルールでは `null`。ハイパーでは `contracts`、`stake`、`bloom`、`chain`、`options` に加え、`multiplier`（100=1倍）、`projected`（現在の役であがった場合の文）、`boosts`（0.25倍単位の成長）、`hp`（光契約が始まるまではnull）、`hpMax` を配信します。配列はプレイヤー順です。`options` は手番プレイヤーにだけ配信します。`sealed` は互換性のため空配列2つを保持します。
 
 ハイパーの公開移動イベントには `hyper: {chain, bloom, multiplier, hp}` が付きます。その札を獲得した直後の公開状態なので、HP・倍率の演出を札の動きと同期できます。通常ルールのイベントにはこのキーを付けません。HP0の獲得が最後のイベントとなり、決着後のめくりは配信しません。
 
 `{ "type": "hyper", "role": "三光" }` は手番・役・契約上限を検証してから一括反映します。重複送信や不正な操作で札や賭け金が一部だけ変わることはありません。
+
+
+### 公開罠・戦闘予告
+
+ハイパー状態は `traps: [cardId|null, cardId|null]`（所有者順）、`trapReady: [bool,bool]`、`damagePreviews` も含みます。HP上限は32、光契約は `storm`（三光）、`snare`（雨四光）、`aegis`（四光）、`zenith`（五光）。契約の `points` は犠牲にした役の実点数で、増点済みのタネ・短冊・カスも固定1ではありません。
+
+```json
+{ "type": "trap", "targetId": 9, "boardRevision": 2 }
+```
+
+雨罠を持つ自分の `play` phase だけ、各手番1回、現在の場札を1枚指定できます。配置で手番と `boardRevision` は進みません。古い再配布revision、他人の手番、場にない札、二重配置は一括拒否し、途中状態を残しません。送信前の取消はローカル操作です。印は全員に見え、再接続のsnapshotにも残ります。自分の次手番開始・再配布・終局で消えます。
+
+`damagePreviews: [{cardId, targetId, damage: [...]}]` は手番プレイヤーにだけ配信します。`play` はその人の手札、`draw_choice` は公開済みのめくり札の選択肢に限定し、観戦者・相手には空配列です。未公開の山札は予告に使いません。
+
+取得の公開イベント `hyper` に `traps` と `damage` の配列を追加します。各レコードは `attacker, defender, kind`（`capture` / `trap`）、`cards, roles, roleGains`（役名と増点文）、`chain, contract, exposure, blocked, power, damage, hpBefore, hpAfter`。`contract` は通常攻撃の初撃値、罠では基礎威力4です。役撃10・攻撃16の上限を適用し、防御後の威力を `power`、残HPで切り詰めた減少を `damage` として区別します。全て整数、初撃のコスト÷3だけ切り捨てます。
+
+同じ取得で通常攻撃と罠の両方を解決します。イベントには2つの対象のHP変化があり得ます。両者HP0なら引分け・配当0、片側HP0なら生存側が勝ちます。HP0が生じた取得で追加めくりを停止します。クライアントはイベントの全レコードを順に再生し、カードの演出・各HP着弾・最後の決着snapshotの順で表示します。
+
+
+### 契約効果と成長量
+
+固有の追加めくりは暴走だけ。共通の初回取得1回、CHAINめくり各手番1回と合算して最大4回。反撃めくりは相手が暴走・3CHAIN以上の未契約側に限る。宴は花力＋3、逆転月は倍率＋0.5と相手の花力＋2へ変更。追猟は花力奪取、連筆はCHAIN追加成長、草蔵はカス枚数に応じた花力。追猟・連筆・草蔵は `contracts[].points` を1〜3へ制限した値を強さに使い、実値を `description` に表示する。`bloom, chain, multiplier` と公開イベントの同項目はこれらの効果を反映する。ログは能力名と実際の変化量を含み、再接続後も履歴から確認できる。

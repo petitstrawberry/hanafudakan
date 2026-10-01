@@ -1,4 +1,4 @@
-import type { HyperContract, RoomView, Yaku } from "./types";
+import type { HyperContract, HyperDamage, RoomView, Yaku } from "./types";
 
 export function canCashOutWithContracts(roles: Yaku[], contracts: HyperContract[], koiReady: boolean): boolean {
   if (contracts.length === 0) return true;
@@ -27,4 +27,22 @@ export function boardChanged(previous: RoomView, next: RoomView): boolean {
     (previous.boardRevision ?? 0) !== (next.boardRevision ?? 0) ||
     // Compatibility with older snapshots that have no revision counter.
     next.hyper?.contracts.some((items, i) => items.length > (previous.hyper?.contracts[i]?.length ?? 0)) === true;
+}
+
+export function canSetTrap(room: RoomView): boolean {
+  return room.myIndex !== null && room.turn === room.myIndex && room.phase === "play" &&
+    room.hyper?.trapReady?.[room.myIndex] === true;
+}
+
+export function damageBreakdown(hit: HyperDamage): string {
+  const parts = hit.kind === "trap" ? [`罠${hit.contract}`] : [`札${hit.cards}`,
+    ...(hit.roles ? [`役${hit.roles}（${hit.roleGains.map(r => `${r.name}＋${r.points}文`).join("・")}）`] : []),
+    ...(hit.chain ? [`CHAIN${hit.chain}`] : []), ...(hit.contract ? [`初撃${hit.contract}`] : [])];
+  if (hit.exposure) parts.push(`被ダメ増${hit.exposure}`);
+  return `${parts.join("＋")} → 上限16${hit.blocked ? `・防御−${hit.blocked}` : ""} → 威力${hit.power} / HP減少${hit.damage}（${hit.hpBefore}→${hit.hpAfter}）`;
+}
+
+export function previewFor(room: RoomView, card: number, target: number): HyperDamage[] {
+  return room.hyper?.damagePreviews?.find(p => p.cardId === card && (p.targetId === target ||
+    captureTargets(room, card).length === 3))?.damage ?? [];
 }
