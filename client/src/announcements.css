@@ -1,0 +1,15 @@
+.version-link { color: var(--gold, #c5aa70); margin-left: 8px; text-decoration: none; white-space: nowrap; }
+.release-list { display: grid; gap: 22px; max-width: 900px; }
+.release-list article, .release-detail { border: 1px solid #788a5c44; border-radius: 12px; padding: clamp(20px, 4vw, 36px); background: #17261ddd; }
+.release-meta { display: flex; flex-wrap: wrap; gap: 12px; color: #c5aa70; font-size: 12px; letter-spacing: .06em; }
+.release-list h2, .release-detail h2 { font-size: clamp(22px, 3vw, 30px); margin: 18px 0; }
+.release-list p, .release-detail p, .release-section li, .release-notice p, .release-notice li { line-height: 1.9; color: #b9c4b1; overflow-wrap: anywhere; }
+.release-detail { margin-top: 24px; max-width: 900px; }
+.release-section { margin-top: 30px; border-top: 1px solid #788a5c33; padding-top: 20px; }
+.release-section h3 { color: #e2d6b7; font-size: 19px; }
+.release-section ul, .release-notice ul { padding-left: 22px; }
+.release-section li + li { margin-top: 12px; }
+.release-notice article { border-top: 1px solid #788a5c44; padding-top: 18px; margin-top: 18px; }
+.release-notice h3 { font-size: 21px; line-height: 1.5; }
+.release-notice .modal-actions { flex-wrap: wrap; }
+@media (max-width: 600px) { .navigation .nav-item { width: auto; min-width: 0; flex: 1; } .sidebar { padding-inline: 5px; } .release-notice .modal-actions .button { width: 100%; } }

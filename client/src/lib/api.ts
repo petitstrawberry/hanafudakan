@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from "./storage";
 import type { Session } from "./types";
 export class ApiError extends Error {
   constructor(
@@ -11,14 +12,14 @@ export class ApiError extends Error {
 const KEY = "hanafudakan-session";
 export function readSession(): Session | null {
   try {
-    const s = JSON.parse(localStorage.getItem(KEY) || "null");
+    const s = JSON.parse(readLocal(KEY) || "null");
     return s?.token && s?.playerId ? s : null;
   } catch {
     return null;
   }
 }
 export function saveSession(s: Session) {
-  localStorage.setItem(KEY, JSON.stringify(s));
+  writeLocal(KEY, JSON.stringify(s));
 }
 export async function api<T>(
   path: string,

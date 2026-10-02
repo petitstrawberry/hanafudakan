@@ -334,6 +334,7 @@ main {
   padding: 0 46px;
 }
 .hero {
+  overflow-x: clip;
   display: grid;
   grid-template-columns: 1fr 1fr;
   min-height: 498px;

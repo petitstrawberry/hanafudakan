@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from "./storage";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -28,7 +29,7 @@ function normalizeCardSkin(value: string | null): CardSkin {
 
 export function readCardSkin(): CardSkin {
   if (typeof window === "undefined") return "recolored";
-  return normalizeCardSkin(window.localStorage.getItem(CARD_SKIN_STORAGE_KEY));
+  return normalizeCardSkin(readLocal(CARD_SKIN_STORAGE_KEY));
 }
 
 interface CardSkinContextValue {
@@ -42,7 +43,7 @@ export function CardSkinProvider({ children }: { children: ReactNode }) {
   const [skin, setSkinState] = useState<CardSkin>(readCardSkin);
   const setSkin = useCallback((next: CardSkin) => {
     setSkinState(next);
-    window.localStorage.setItem(CARD_SKIN_STORAGE_KEY, next);
+    writeLocal(CARD_SKIN_STORAGE_KEY, next);
   }, []);
 
   useEffect(() => {
