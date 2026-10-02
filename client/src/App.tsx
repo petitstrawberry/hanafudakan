@@ -1,7 +1,9 @@
+import { readLocal, writeLocal } from "./lib/storage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ArrowRight,
+  Bell,
   BookOpen,
   ChevronRight,
   CircleHelp,
@@ -27,6 +29,9 @@ import {
   Wifi,
   X,
 } from "lucide-react";
+import Announcements, { ReleaseMeta } from "./components/Announcements";
+import { APP_VERSION, RELEASE_READ_KEY, acknowledgeReleases, canShowReleaseNotice, readReleaseVersion, unreadReleases } from "./lib/releases";
+import type { Release } from "./lib/releases";
 import Card from "./components/Card";
 import CardArtCredit from "./components/CardArtCredit";
 import Scene from "./components/Scene";
@@ -38,7 +43,7 @@ import { playSound, setMuted } from "./lib/audio";
 import { api, ApiError, readSession, saveSession } from "./lib/api";
 import type { Mode, RoomSummary, RoomView, Session } from "./lib/types";
 
-type Page = "lobby" | "collection" | "guide" | "settings";
+type Page = "lobby" | "collection" | "guide" | "settings" | "announcements";
 type Modal = "practice" | "create" | "profile" | "leave" | RoomSummary | null;
 const YAKU = [
   {
@@ -165,24 +170,27 @@ function ModalShell({
 export default function App() {
   const { skin: cardSkin } = useCardSkin();
   const [session, setSession] = useState<Session | null>(readSession);
-  const [page, setPage] = useState<Page>("lobby");
+  const [page, setPage] = useState<Page>(() => location.hash.startsWith("#announcements") ? "announcements" : "lobby");
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [online, setOnline] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [invitationPending, setInvitationPending] = useState(() => new URLSearchParams(location.search).has("room"));
   const [roomId, setRoomId] = useState<string | null>(null);
   const [room, setRoom] = useState<RoomView | null>(null);
   const [connected, setConnected] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
+  const [readThrough, setReadThrough] = useState(readReleaseVersion);
+  const [releaseNotice, setReleaseNotice] = useState<readonly Release[]>([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [sound, setSound] = useState(
-    () => localStorage.getItem("hana-sound") !== "false",
+    () => readLocal("hana-sound") !== "false",
   );
   const [motion, setMotion] = useState(
     () =>
-      localStorage.getItem("hana-motion") !== "false" &&
+      readLocal("hana-motion") !== "false" &&
       !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const [backend, setBackend] = useState("描画準備中");
@@ -199,10 +207,10 @@ export default function App() {
   }, []);
   useEffect(() => {
     setMuted(!sound);
-    localStorage.setItem("hana-sound", String(sound));
+    writeLocal("hana-sound", String(sound));
   }, [sound]);
   useEffect(() => {
-    localStorage.setItem("hana-motion", String(motion));
+    writeLocal("hana-motion", String(motion));
     document.documentElement.dataset.motion = String(motion);
   }, [motion]);
   const refresh = useCallback(async () => {
@@ -232,7 +240,7 @@ export default function App() {
     }
     const name =
       session?.name ||
-      localStorage.getItem("hana-name") ||
+      readLocal("hana-name") ||
       `旅人${Math.floor(100 + Math.random() * 900)}`;
     const s = await api<Session>("/session", {
       method: "POST",
@@ -298,12 +306,15 @@ export default function App() {
     if (loading || !online || inviteHandled.current) return;
     inviteHandled.current = true;
     const id = new URLSearchParams(location.search).get("room");
-    if (!id) return;
+    if (!id) { setInvitationPending(false); return; }
     const r = rooms.find((r) => r.id === id);
     if (r) {
-      if (r.locked) setModal(r);
-      else void join(r, "", r.players >= 2);
-    } else notify("招待された卓は見つかりませんでした。");
+      if (r.locked) { setModal(r); setInvitationPending(false); }
+      else void join(r, "", r.players >= 2).finally(() => setInvitationPending(false));
+    } else {
+      setInvitationPending(false);
+      notify("招待された卓は見つかりませんでした。");
+    }
   }, [loading, online, rooms]);
   useEffect(() => {
     if (!roomId || !session) return;
@@ -410,6 +421,41 @@ export default function App() {
       `${r.name} ${r.hostName}`.toLowerCase().includes(search.toLowerCase()),
   );
   const closeModal = useCallback(() => setModal(null), []);
+  const unread = unreadReleases(readThrough);
+  const dismissReleaseNotice = useCallback(() => {
+    if (!releaseNotice.length) return;
+    const version = releaseNotice[0].version;
+    acknowledgeReleases(version);
+    setReadThrough(version);
+    setReleaseNotice([]);
+  }, [releaseNotice]);
+  useEffect(() => {
+    const change = () => {
+      if (location.hash.startsWith("#announcements")) setPage("announcements");
+      else if (page === "announcements") setPage("lobby");
+    };
+    window.addEventListener("hashchange", change);
+    return () => window.removeEventListener("hashchange", change);
+  }, [page]);
+  useEffect(() => {
+    const change = (event: StorageEvent) => {
+      if (event.key === RELEASE_READ_KEY) setReadThrough(readReleaseVersion());
+    };
+    window.addEventListener("storage", change);
+    return () => window.removeEventListener("storage", change);
+  }, []);
+  useEffect(() => {
+    if (!releaseNotice.length && unread.length && canShowReleaseNotice({
+      roomId, page, modalOpen: !!modal, busy, loading,
+      invitation: invitationPending,
+    })) setReleaseNotice(unread);
+  }, [readThrough, roomId, page, modal, busy, loading, invitationPending, releaseNotice.length]);
+  const navigate = (next: Page) => {
+    if (next === "announcements") location.hash = "announcements";
+    else if (location.hash.startsWith("#announcements")) history.replaceState({}, "", location.pathname + location.search);
+    setPage(next);
+  };
+
   return (
     <div className="app-shell">
       {!roomId && (
@@ -426,7 +472,7 @@ export default function App() {
           href="/"
           onClick={(e) => {
             e.preventDefault();
-            setPage("lobby");
+            navigate("lobby");
           }}
         >
           <FlowerMark />
@@ -447,20 +493,22 @@ export default function App() {
                 en: "CARDS",
               },
               { id: "guide", icon: BookOpen, label: "遊びかた", en: "GUIDE" },
+              { id: "announcements", icon: Bell, label: "お知らせ", en: "NEWS" },
             ] as const
           ).map((item) => (
             <button
               key={item.id}
+              aria-label={item.id === "lobby" && roomId ? "対戦に戻る" : item.label}
               className={`nav-item ${page === item.id ? "active" : ""}`}
               onClick={() => {
-                setPage(item.id);
+                navigate(item.id);
                 playSound("click");
               }}
             >
               <item.icon size={19} />
               <span>
                 {item.id === "lobby" && roomId ? "対戦に戻る" : item.label}
-                <small>{item.en}</small>
+                <small>{item.en}{item.id === "announcements" && unread.length > 0 ? " · 未読" : ""}</small>
               </span>
               {page === item.id && <span className="nav-dot" />}
             </button>
@@ -480,7 +528,7 @@ export default function App() {
           <button
             className={`nav-item settings-nav ${page === "settings" ? "active" : ""}`}
             onClick={() => {
-              setPage("settings");
+              navigate("settings");
             }}
           >
             <Settings2 size={18} />
@@ -513,6 +561,7 @@ export default function App() {
                     collection: "札の図鑑",
                     guide: "遊びかた",
                     settings: "設定",
+                    announcements: "お知らせ",
                   }[page]}
             </span>
           </div>
@@ -900,6 +949,8 @@ export default function App() {
               onPractice={() => void create("はじめてのこいこい", "cpu", 3)}
               disabled={!online || busy || !!roomId}
             />
+          ) : page === "announcements" ? (
+            <Announcements />
           ) : (
             <Settings
               sound={sound}
@@ -914,7 +965,7 @@ export default function App() {
         </main>
         <footer className="footer">
           <span>
-            花札館 <span className="footer-dot">·</span> 四季を遊ぶ、縁を結ぶ。
+            花札館 <a className="version-link" href="#announcements" onClick={() => setPage("announcements")}>v{APP_VERSION}</a> <span className="footer-dot">·</span> 四季を遊ぶ、縁を結ぶ。
           </span>
           <div>
             <span className="render-tag">
@@ -925,6 +976,22 @@ export default function App() {
           </div>
         </footer>
       </div>
+      {releaseNotice.length > 0 && !roomId && (
+        <ModalShell title="花札館が新しくなりました" onClose={dismissReleaseNotice}>
+          <div className="release-notice">
+            <p className="form-intro">未読の更新 {releaseNotice.length}件をご案内します。閉じると、ここに表示した更新まで既読になります。</p>
+            {releaseNotice.map(release => <article key={release.version}>
+              <ReleaseMeta release={release} /><h3>{release.title}</h3><p>{release.summary}</p>
+              <ul>{release.highlights.map(item => <li key={item}>{item}</li>)}</ul>
+            </article>)}
+            <p className="form-note">あとから「お知らせ」で詳細を読めます。既読はこのブラウザーに保存します。保存できない場合は、開いている間のみ保持します。</p>
+            <div className="modal-actions">
+              <button className="button primary" onClick={dismissReleaseNotice}>確認して閉じる</button>
+              <button className="button secondary" onClick={() => { dismissReleaseNotice(); navigate("announcements"); }}>お知らせ一覧へ</button>
+            </div>
+          </div>
+        </ModalShell>
+      )}
       {modal === "leave" && (
         <ModalShell title="この一局を、終えますか？" onClose={closeModal}>
           <p className="form-intro">
@@ -984,7 +1051,7 @@ export default function App() {
                   body: { name },
                 });
                 saveSession(s);
-                localStorage.setItem("hana-name", name);
+                writeLocal("hana-name", name);
                 setSession(s);
                 setModal(null);
                 notify("お名前を変更しました");

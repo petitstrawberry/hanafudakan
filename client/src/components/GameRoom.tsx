@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from "../lib/storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { createPortal } from "react-dom";
@@ -101,7 +102,7 @@ const fieldWobble = (id: number, index: number) => ({
   "--field-rotate": `${(((id * 7 + index * 11) % 9) - 4) / 3}deg`,
 });
 const motionEnabled = () =>
-  localStorage.getItem("hana-motion") !== "false" &&
+  readLocal("hana-motion") !== "false" &&
   !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const signature = (room: RoomView) =>
   JSON.stringify([
@@ -171,7 +172,7 @@ export default function GameRoom({
   const [trapActivation, setTrapActivation] = useState<import("../lib/types").TrapActivation | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
   const [assist, setAssist] = useState(
-    () => localStorage.getItem("hana-assist") !== "false",
+    () => readLocal("hana-assist") !== "false",
   );
   const [chat, setChat] = useState("");
   const [showChat, setShowChat] = useState(false);
@@ -190,7 +191,7 @@ export default function GameRoom({
   const initialDealPending = useRef(incoming.phase === "play" && incoming.field.length === 8 && incoming.players.every(p => p.handCount === 8));
   const [dealing, setDealing] = useState(initialDealPending.current);
   const [dealCards, setDealCards] = useState<DealCard[]>([]);
-  const [music, setMusic] = useState(() => localStorage.getItem("hana-music") !== "false");
+  const [music, setMusic] = useState(() => readLocal("hana-music") !== "false");
   const hyperFlashTimer = useRef(0);
   const boardKey = `${room.round}:${room.boardRevision ?? 0}:${room.hyper?.contracts.flat().length ?? 0}`;
   const fieldSlotState = useRef<{ key: string; slots: FieldSlot[] }>({ key: boardKey, slots: [] });
@@ -339,7 +340,7 @@ export default function GameRoom({
   const battleMusic = hyperState?.contracts.some(contracts => contracts.length > 0) ?? false;
   const musicCue = `${room.id}:${room.status === "playing" ? room.round : 0}:${battleMusic ? "hyper" : "calm"}`;
   useEffect(() => {
-    localStorage.setItem("hana-music", String(music));
+    writeLocal("hana-music", String(music));
     const syncMusic = () => setMusicMode(music && connected && !ended && !document.hidden ? battleMusic ? "hyper" : "calm" : null, musicCue);
     syncMusic();
     document.addEventListener("pointerdown", syncMusic, { passive: true });
@@ -362,7 +363,7 @@ export default function GameRoom({
     };
   }, []);
   useEffect(() => {
-    localStorage.setItem("hana-assist", String(assist));
+    writeLocal("hana-assist", String(assist));
   }, [assist]);
   useEffect(() => {
     setSelected(null);

@@ -6,6 +6,8 @@
   outputs =
     { self, nixpkgs }:
     let
+      version = (builtins.head (libVersionData.releases)).version;
+      libVersionData = builtins.fromJSON (builtins.readFile ./client/src/data/releases.json);
       systems = [
         "aarch64-linux"
         "x86_64-linux"
@@ -20,7 +22,7 @@
           inherit (pkgs) lib;
           server = pkgs.rustPlatform.buildRustPackage {
             pname = "hanafudakan-server";
-            version = "0.1.0";
+            inherit version;
             src = lib.fileset.toSource {
               root = ./.;
               fileset = lib.fileset.unions [
@@ -35,7 +37,7 @@
           };
           client = pkgs.buildNpmPackage {
             pname = "hanafudakan-client";
-            version = "0.1.0";
+            inherit version;
             src = lib.cleanSourceWith {
               src = ./client;
               filter =
@@ -74,7 +76,7 @@
             '';
           };
           hanafudakan =
-            pkgs.runCommand "hanafudakan-0.1.0"
+            pkgs.runCommand "hanafudakan-${version}"
               {
                 nativeBuildInputs = [ pkgs.makeWrapper ];
                 meta.mainProgram = "hanafudakan-server";
@@ -87,7 +89,7 @@
               '';
           # Docker copies this output and its runtime closure into a scratch image.
           container = pkgs.symlinkJoin {
-            name = "hanafudakan-container-0.1.0";
+            name = "hanafudakan-container-${version}";
             paths = [
               hanafudakan
               pkgs.curl
@@ -110,7 +112,13 @@
             program = "${hanafudakan}/bin/hanafudakan-server";
             meta.description = "花札館 game server with the Web client";
           };
-          checks = { inherit server client; };
+          checks = {
+            inherit server client;
+            versionConsistency = pkgs.runCommand "hanafudakan-version-check" { nativeBuildInputs = [ pkgs.nodejs_22 ]; } ''
+              node ${./scripts/release-version.mjs} --check ${./.}
+              touch "$out"
+            '';
+          };
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
               cargo

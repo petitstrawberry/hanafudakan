@@ -95,6 +95,7 @@ nix develop --command npm --prefix client test
 
 ## ドキュメント
 
+- [バージョンとお知らせの更新手順](docs/releases.md)
 - [セルフホスト・環境変数・HTTPS](docs/self-hosting.md)
 - [サーバーとクライアントの構成](docs/architecture.md)
 - [Nix ビルド・開発環境](docs/nix.md)
